@@ -1,0 +1,1233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Neural Network Classifier Playground</title>
+<style>
+  :root{
+    --bg:#f5f6f8; --panel:#ffffff; --panel2:#f0f2f5; --line:#d6dae1;
+    --fg:#1a1d23; --muted:#5f6875; --accent:#2563eb;
+    --pos:#2563eb; --neg:#dc2626; --ok:#15803d; --err:#b91c1c;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+       font:15px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  header{padding:14px 20px;border-bottom:1px solid var(--line);background:var(--panel);
+         display:flex;align-items:baseline;gap:14px;flex-wrap:wrap}
+  h1{font-size:17px;margin:0;font-weight:650}
+  header .sub{color:var(--muted);font-size:12px}
+  .wrap{display:grid;grid-template-columns:330px 1fr;gap:16px;padding:16px;align-items:start}
+  @media (max-width:1050px){.wrap{grid-template-columns:1fr}}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:16px}
+  .panel h2{font-size:12px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);margin:0 0 10px}
+  .row{display:flex;gap:8px;align-items:center;margin-bottom:8px}
+  .row label{flex:1;color:var(--muted)}
+  input,select,button{background:#fff;color:var(--fg);border:1px solid var(--line);
+                      border-radius:6px;padding:5px 8px;font:inherit}
+  input[type=number]{width:94px}
+  input[type=range]{padding:0;width:130px}
+  button{cursor:pointer;background:var(--panel2);padding:6px 12px}
+  button:hover{border-color:var(--accent)}
+  button.primary{background:var(--accent);color:#fff;border-color:var(--accent);font-weight:600}
+  .btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+  table{border-collapse:collapse;width:100%;font-size:13px}
+  th,td{border:1px solid var(--line);padding:0}
+  th{background:var(--panel2);padding:5px 6px;color:var(--muted);font-weight:600;font-size:12px;white-space:nowrap}
+  td input{width:100%;border:0;border-radius:0;background:transparent;padding:5px 6px}
+  th input{width:100%;min-width:56px;border:0;border-radius:0;background:transparent;padding:5px 6px;
+           font:inherit;font-weight:600;font-size:12px;color:var(--muted)}
+  th input:focus{outline:2px solid var(--accent);outline-offset:-2px;color:var(--fg)}
+  td input:focus{outline:2px solid var(--accent);outline-offset:-2px}
+  .tablewrap{max-height:300px;overflow:auto;border:1px solid var(--line);border-radius:8px}
+  /* Canvases need an explicit CSS height. With only width:100% the browser scales the
+     intrinsic height by the same factor and the box balloons. */
+  canvas{width:100%;background:var(--panel2);border:1px solid var(--line);border-radius:8px;display:block;
+         touch-action:none}
+  #netView{height:470px}
+  #lossChart{height:200px}
+  .row label small{display:block;color:#8a93a2;font-size:11.5px;font-weight:400}
+  details{margin-top:10px;border-top:1px solid var(--line);padding-top:8px}
+  summary{cursor:pointer;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.06em}
+  details[open] summary{margin-bottom:8px}
+  button.big{font-size:16px;padding:8px 18px}
+  .metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:10px}
+  .metric{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+  .metric .k{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.05em}
+  .metric .v{font-size:18px;font-variant-numeric:tabular-nums;margin-top:2px}
+  .hint{color:var(--muted);font-size:12px;margin:6px 0 0}
+  .msg{margin-top:8px;font-size:12px;min-height:16px}
+  .msg.err{color:var(--err)} .msg.ok{color:var(--ok)}
+  .legend{display:flex;gap:12px;flex-wrap:wrap;font-size:12px;color:var(--muted);margin-top:6px}
+  .swatch{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:middle}
+  .netgrid{display:grid;grid-template-columns:1fr 300px;gap:14px;align-items:start}
+  @media (max-width:1250px){.netgrid{grid-template-columns:1fr}}
+  .inspector{border:1px solid var(--line);border-radius:8px;padding:10px;background:var(--panel2);
+             max-height:470px;overflow:auto}
+  .inspector h3{margin:0 0 6px;font-size:13px}
+  .inspector .sub{color:var(--muted);font-size:12px;margin:0 0 10px}
+  .wtable{width:100%;font-size:12px;font-variant-numeric:tabular-nums}
+  .wtable td{padding:0}
+  .wtable td.lab{padding:3px 6px;color:var(--muted);white-space:nowrap;background:transparent}
+  .wtable input{width:100%;padding:3px 6px;font-variant-numeric:tabular-nums;background:#fff}
+  .kv{display:flex;justify-content:space-between;gap:8px;font-size:12px;padding:2px 0;
+      font-variant-numeric:tabular-nums}
+  .kv span:first-child{color:var(--muted)}
+  .overlay{position:fixed;inset:0;background:rgba(15,20,30,.45);display:none;
+           align-items:center;justify-content:center;padding:20px;z-index:20}
+  .overlay.open{display:flex}
+  .dialog{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px;
+          width:min(560px,100%);box-shadow:0 12px 40px rgba(0,0,0,.22)}
+  .dialog h3{margin:0 0 6px;font-size:15px}
+  .dialog textarea{width:100%;height:190px;resize:vertical;font:13px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;
+                   background:#fff;color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:8px}
+  pre.pred{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px;margin:8px 0 0;
+           font-size:12px;white-space:pre-wrap;min-height:20px}
+</style>
+</head>
+<body>
+<header>
+  <h1>Neural Network Classifier Playground</h1>
+  <span class="sub">Build a little brain, show it some examples, and watch it learn.</span>
+</header>
+
+<div class="wrap">
+  <!-- ============ LEFT: configuration ============ -->
+  <div>
+    <div class="panel">
+      <h2>Step 1 &middot; Build the network</h2>
+      <div class="row"><label for="nIn">Inputs<small>numbers you feed in</small></label><input type="number" id="nIn" min="1" max="12" value="2"></div>
+      <div class="row"><label for="nOut">Answers<small>how many classes to pick from</small></label><input type="number" id="nOut" min="2" max="10" value="2"></div>
+      <div class="row"><label for="nHidden">Hidden layers<small>the thinking layers in the middle</small></label><input type="number" id="nHidden" min="0" max="6" value="1"></div>
+      <div id="hiddenSizes"></div>
+      <div class="row"><label for="act">Neuron style<small>activation function</small></label>
+        <select id="act">
+          <option value="tanh">tanh</option>
+          <option value="relu" selected>relu</option>
+          <option value="sigmoid">sigmoid</option>
+          <option value="linear">linear</option>
+        </select>
+      </div>
+      <p class="hint">The last layer always turns its numbers into percentages that add up to 100%.</p>
+      <div id="archMsg" class="msg"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Step 2 &middot; Teach it</h2>
+      <div class="row"><label for="lr">Learning speed<small>how big a step it takes each time</small></label><input type="number" id="lr" step="0.001" min="0.0001" value="0.05"></div>
+      <div class="row"><label for="epochs">Practice rounds<small>epochs</small></label><input type="number" id="epochs" min="1" value="500"></div>
+      <div class="btns">
+        <button class="primary big" id="btnTrain">Train!</button>
+        <button id="btnStop">Stop</button>
+        <button id="btnReset">Start over</button>
+      </div>
+      <div id="trainMsg" class="msg"></div>
+      <details>
+        <summary>Expert settings</summary>
+        <div class="row"><label for="batch">Batch size<small>0 = use every row at once</small></label><input type="number" id="batch" min="0" value="0"></div>
+        <div class="row"><label for="seed">Random seed<small>same seed = same starting point</small></label><input type="number" id="seed" value="42"></div>
+        <div class="row"><label for="standardize">Scale the inputs<small>shrink big numbers to a similar size</small></label><input type="checkbox" id="standardize" checked></div>
+      </details>
+    </div>
+
+    <div class="panel">
+      <h2>Step 3 &middot; Practice and exam</h2>
+      <div class="row"><label for="splitMode">How should we test it?<small>an exam it has not seen is fairer</small></label>
+        <select id="splitMode">
+          <option value="random">Keep some rows back for the exam</option>
+          <option value="same">Use the same rows for both</option>
+        </select>
+      </div>
+      <div class="row" id="splitRow"><label for="split">Rows used for practice: <span id="splitVal">70%</span></label>
+        <input type="range" id="split" min="10" max="95" step="5" value="70"></div>
+      <p class="hint" id="splitInfo"></p>
+    </div>
+
+    <div class="panel">
+      <h2>Step 4 &middot; Try one example</h2>
+      <div id="predInputs"></div>
+      <div class="btns">
+        <button class="primary" id="btnPredict">Send it through</button>
+        <button id="btnClearProbe">Clear</button>
+      </div>
+      <p class="hint">Lights up every neuron in the picture so you can see what each one did.</p>
+      <pre class="pred" id="predOut">&mdash;</pre>
+    </div>
+  </div>
+
+  <!-- ============ RIGHT: network + data + results ============ -->
+  <div>
+    <div class="panel">
+      <h2>Network</h2>
+      <div class="netgrid">
+        <div>
+          <canvas id="netView"></canvas>
+          <div class="legend">
+            <span><span class="swatch" style="background:var(--pos)"></span>blue line = pushes up</span>
+            <span><span class="swatch" style="background:var(--neg)"></span>red line = pushes down</span>
+            <span>thicker line = stronger</span>
+            <span><b>Click a circle or a line to see its numbers.</b></span>
+          </div>
+          <div class="btns">
+            <button id="btnExportCsv">Download numbers (CSV)</button>
+          </div>
+          <p class="hint">One row per neuron, in order &mdash; first its bias, then its incoming
+             weights: <code>[[h0b,h0w0,h0w1],[h1b,&hellip;],&hellip;,[y0b,&hellip;]]</code>.</p>
+        </div>
+        <div class="inspector" id="inspector"></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Your data</h2>
+      <div class="tablewrap"><table id="dataTable"></table></div>
+      <div class="btns">
+        <button id="btnAddRow">+ Row</button>
+        <button id="btnAddRows">+ 5 Rows</button>
+        <button id="btnClear">Clear</button>
+        <select id="preset">
+          <option value="">Load example&hellip;</option>
+          <option value="xor">XOR (2 in, 2 classes)</option>
+          <option value="circle">Circle vs ring (2 in, 2 classes)</option>
+          <option value="blobs3">3 blobs (2 in, 3 classes)</option>
+          <option value="spiral">Two spirals (2 in, 2 classes)</option>
+        </select>
+        <button id="btnCsv">Paste data&hellip;</button>
+      </div>
+      <p class="hint">One row = one example. Type the numbers, then put the right answer in the last column
+         (0, 1, 2 &hellip;). Blank rows are ignored.</p>
+      <div id="dataMsg" class="msg"></div>
+    </div>
+
+    <div class="panel">
+      <h2>How is it doing?</h2>
+      <div class="metrics">
+        <div class="metric"><div class="k">Rounds done</div><div class="v" id="mEpoch">0</div></div>
+        <div class="metric"><div class="k">Mistakes (loss)</div><div class="v" id="mTrainLoss">&mdash;</div></div>
+        <div class="metric"><div class="k">Right in practice</div><div class="v" id="mTrainAcc">&mdash;</div></div>
+        <div class="metric"><div class="k">Right in the exam</div><div class="v" id="mTestAcc">&mdash;</div></div>
+      </div>
+      <canvas id="lossChart"></canvas>
+      <div class="legend">
+        <span><span class="swatch" style="background:#2563eb"></span>mistakes &mdash; should go down</span>
+        <span><span class="swatch" style="background:#15803d"></span>right in practice &mdash; should go up</span>
+        <span><span class="swatch" style="background:#d97706"></span>right in the exam</span>
+      </div>
+      <details>
+        <summary>Which answers did it mix up?</summary>
+        <div id="confusion"></div>
+      </details>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="csvModal">
+  <div class="dialog">
+    <h3>Paste your data</h3>
+    <p class="hint" style="margin:0 0 8px">One example per line. Separate the numbers with commas,
+       spaces or tabs, and put the right answer last. A heading line is skipped automatically.<br>
+       Example: <code>1.5, 2.0, 0</code></p>
+    <textarea id="csvText" placeholder="1.5, 2.0, 0&#10;3.1, 0.4, 1&#10;0.2, 2.8, 0"></textarea>
+    <div id="csvMsg" class="msg"></div>
+    <div class="btns" style="justify-content:flex-end">
+      <button id="csvCancel">Cancel</button>
+      <button class="primary" id="csvLoad">Load these rows</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ============================================================
+   Activations
+   ============================================================ */
+const ACT = {
+  tanh:    { f: z => Math.tanh(z),       d: (z,a) => 1 - a*a },
+  relu:    { f: z => z > 0 ? z : 0,      d: (z,a) => z > 0 ? 1 : 0 },
+  sigmoid: { f: z => 1/(1+Math.exp(-z)), d: (z,a) => a*(1-a) },
+  linear:  { f: z => z,                  d: () => 1 }
+};
+
+/* Deterministic RNG so runs are reproducible from the seed field. */
+function makeRng(seed){
+  let s = (seed >>> 0) || 1;
+  return function(){
+    s ^= s << 13; s >>>= 0;
+    s ^= s >> 17;
+    s ^= s << 5;  s >>>= 0;
+    return s / 4294967296;
+  };
+}
+function makeGauss(rng){
+  return function(){
+    let u = 0, v = 0;
+    while (u === 0) u = rng();
+    while (v === 0) v = rng();
+    return Math.sqrt(-2*Math.log(u)) * Math.cos(2*Math.PI*v);
+  };
+}
+
+/* ============================================================
+   Network
+   ============================================================ */
+function makeNet(sizes, actName, rng){
+  const gauss = makeGauss(rng);
+  const W = [], b = [];
+  for (let l = 1; l < sizes.length; l++){
+    const fanIn = sizes[l-1];
+    // He init for relu, Xavier otherwise.
+    const scale = actName === 'relu' ? Math.sqrt(2/fanIn) : Math.sqrt(1/fanIn);
+    const w = [];
+    for (let i = 0; i < sizes[l]; i++){
+      const row = [];
+      for (let j = 0; j < fanIn; j++) row.push(gauss()*scale);
+      w.push(row);
+    }
+    W.push(w);
+    b.push(new Array(sizes[l]).fill(0));
+  }
+  return { sizes, act: actName, W, b, L: sizes.length - 1 };
+}
+
+function softmax(z){
+  const m = Math.max.apply(null, z);
+  const e = z.map(v => Math.exp(v - m));
+  const s = e.reduce((a,c) => a+c, 0);
+  return e.map(v => v/s);
+}
+
+/* Returns { zs, as } with as[0] === input, as[L] === softmax probabilities. */
+function forward(net, x){
+  const act = ACT[net.act];
+  const as = [x], zs = [null];
+  let a = x;
+  for (let l = 0; l < net.L; l++){
+    const W = net.W[l], b = net.b[l];
+    const z = new Array(W.length);
+    for (let i = 0; i < W.length; i++){
+      const row = W[i];
+      let s = b[i];
+      for (let j = 0; j < row.length; j++) s += row[j]*a[j];
+      z[i] = s;
+    }
+    zs.push(z);
+    a = (l === net.L - 1) ? softmax(z) : z.map(act.f);
+    as.push(a);
+  }
+  return { zs, as };
+}
+
+function predict(net, x){ return forward(net, x).as[net.L]; }
+function argmax(v){ let bi = 0; for (let i = 1; i < v.length; i++) if (v[i] > v[bi]) bi = i; return bi; }
+
+/* One pass of mini-batch SGD over the given samples. Returns mean loss. */
+function trainEpoch(net, data, lr, batchSize, rng){
+  const act = ACT[net.act];
+  const idx = data.map((_, i) => i);
+  for (let i = idx.length - 1; i > 0; i--){            // Fisher-Yates shuffle
+    const j = Math.floor(rng()*(i+1));
+    const t = idx[i]; idx[i] = idx[j]; idx[j] = t;
+  }
+  const bs = batchSize > 0 ? Math.min(batchSize, idx.length) : idx.length;
+  let totalLoss = 0;
+
+  for (let start = 0; start < idx.length; start += bs){
+    const batch = idx.slice(start, start + bs);
+    const gW = net.W.map(w => w.map(r => new Array(r.length).fill(0)));
+    const gb = net.b.map(v => new Array(v.length).fill(0));
+
+    for (const si of batch){
+      const s = data[si];
+      const fp = forward(net, s.x);
+      const zs = fp.zs, as = fp.as;
+      const p = as[net.L];
+      totalLoss += -Math.log(Math.max(p[s.y], 1e-12));
+
+      // Softmax + cross-entropy: delta at the output is simply (p - onehot).
+      let delta = p.slice();
+      delta[s.y] -= 1;
+
+      for (let l = net.L - 1; l >= 0; l--){
+        const aPrev = as[l];
+        for (let i = 0; i < delta.length; i++){
+          gb[l][i] += delta[i];
+          const gRow = gW[l][i];
+          for (let j = 0; j < aPrev.length; j++) gRow[j] += delta[i]*aPrev[j];
+        }
+        if (l > 0){
+          const prev = new Array(aPrev.length).fill(0);
+          for (let i = 0; i < delta.length; i++){
+            const row = net.W[l][i], di = delta[i];
+            for (let j = 0; j < row.length; j++) prev[j] += row[j]*di;
+          }
+          for (let j = 0; j < prev.length; j++) prev[j] *= act.d(zs[l][j], as[l][j]);
+          delta = prev;
+        }
+      }
+    }
+
+    const step = lr / batch.length;
+    for (let l = 0; l < net.L; l++){
+      for (let i = 0; i < net.W[l].length; i++){
+        net.b[l][i] -= step*gb[l][i];
+        const row = net.W[l][i], grow = gW[l][i];
+        for (let j = 0; j < row.length; j++) row[j] -= step*grow[j];
+      }
+    }
+  }
+  return totalLoss / data.length;
+}
+
+function evaluate(net, data){
+  if (!data.length) return { loss: NaN, acc: NaN };
+  let loss = 0, correct = 0;
+  for (const s of data){
+    const p = predict(net, s.x);
+    loss += -Math.log(Math.max(p[s.y], 1e-12));
+    if (argmax(p) === s.y) correct++;
+  }
+  return { loss: loss/data.length, acc: correct/data.length };
+}
+
+/* ============================================================
+   State + DOM helpers
+   ============================================================ */
+const $ = id => document.getElementById(id);
+const esc = v => String(v == null ? '' : v).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
+const fmt = v => (v >= 0 ? ' ' : '') + v.toFixed(4);
+
+const state = {
+  rows: [],          // array of arrays of strings: [x1..xn, label]
+  colNames: [],      // editable header name per input column
+  net: null,
+  hiddenSizes: [4],
+  history: [],       // { epoch, trainLoss, trainAcc, testAcc }
+  epoch: 0,
+  running: false,
+  norm: null,        // { mean:[], std:[] } fitted on the training split
+  split: null,       // { train:[], test:[] }
+  geom: null,        // node/edge positions for hit-testing the diagram
+  sel: null,         // { kind:'node', l, i } | { kind:'edge', l, i, j }
+  probe: null        // { x:[], zs, as } from the last forward pass
+};
+
+/* Display names. Input columns are whatever the table header says (default x0, x1, …);
+   hidden neurons are h0, h1, …; answers are y0, y1, … matching the class numbers in the table. */
+function colName(i){
+  const v = state.colNames[i];
+  return (v && v.trim()) ? v.trim() : 'x' + i;
+}
+function neuronName(l, i){
+  if (!state.net) return 'x' + i;
+  if (l === 0) return colName(i);
+  if (l === state.net.L) return 'y' + i;
+  return 'h' + i;
+}
+function ensureColNames(n){
+  while (state.colNames.length < n) state.colNames.push('x' + state.colNames.length);
+  state.colNames.length = n;
+}
+
+function nIn(){ return Math.max(1, parseInt($('nIn').value) || 1); }
+function nOut(){ return Math.max(2, parseInt($('nOut').value) || 2); }
+function layerSizes(){ return [nIn()].concat(state.hiddenSizes, [nOut()]); }
+
+/* ---- hidden layer size inputs ---- */
+function renderHiddenSizes(){
+  const n = Math.max(0, parseInt($('nHidden').value) || 0);
+  while (state.hiddenSizes.length < n) state.hiddenSizes.push(4);
+  state.hiddenSizes.length = n;
+  const box = $('hiddenSizes');
+  box.innerHTML = '';
+  state.hiddenSizes.forEach((sz, i) => {
+    const row = document.createElement('div');
+    row.className = 'row';
+    row.innerHTML = '<label>Neurons in hidden layer ' + (i+1) + '</label>';
+    const inp = document.createElement('input');
+    inp.type = 'number'; inp.min = '1'; inp.max = '32'; inp.value = sz;
+    inp.addEventListener('input', () => {
+      state.hiddenSizes[i] = Math.max(1, parseInt(inp.value) || 1);
+      resetNet();
+    });
+    row.appendChild(inp);
+    box.appendChild(row);
+  });
+  if (n === 0) box.innerHTML = '<p class="hint">No hidden layers &rarr; plain softmax regression (linear classifier).</p>';
+}
+
+/* ---- data table ---- */
+function renderTable(){
+  const t = $('dataTable');
+  const n = nIn();
+  ensureColNames(n);
+  let html = '<thead><tr><th style="width:34px">#</th>';
+  for (let i = 0; i < n; i++){
+    html += '<th><input class="colName" data-c="' + i + '" value="' + esc(colName(i)) +
+            '" title="rename this column"></th>';
+  }
+  html += '<th style="width:80px">answer</th><th style="width:30px"></th></tr></thead><tbody>';
+  state.rows.forEach((r, ri) => {
+    html += '<tr><th>' + (ri+1) + '</th>';
+    for (let i = 0; i < n; i++){
+      html += '<td><input data-r="' + ri + '" data-c="' + i + '" value="' + esc(r[i]) + '"></td>';
+    }
+    html += '<td><input data-r="' + ri + '" data-c="label" value="' + esc(r[n]) + '"></td>';
+    html += '<td><button data-del="' + ri + '" title="delete row" ' +
+            'style="border:0;background:transparent;color:var(--muted);padding:2px 6px">&times;</button></td></tr>';
+  });
+  t.innerHTML = html + '</tbody>';
+
+  t.querySelectorAll('input.colName').forEach(inp => {
+    inp.addEventListener('input', () => {
+      const c = +inp.dataset.c;
+      state.colNames[c] = inp.value;
+      // Rename the "try one example" field in place, so its typed value survives.
+      const labs = $('predInputs').querySelectorAll('label');
+      if (labs[c]) labs[c].textContent = colName(c);
+      drawNet(); renderInspector();
+    });
+  });
+  t.querySelectorAll('tbody input').forEach(inp => {
+    inp.addEventListener('input', () => {
+      const r = +inp.dataset.r;
+      const c = inp.dataset.c === 'label' ? nIn() : +inp.dataset.c;
+      state.rows[r][c] = inp.value;
+      updateSplitInfo();
+    });
+  });
+  t.querySelectorAll('button[data-del]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      state.rows.splice(+btn.dataset.del, 1);
+      renderTable(); resplit();
+    });
+  });
+}
+
+function addRows(k){
+  const n = nIn();
+  for (let i = 0; i < k; i++) state.rows.push(new Array(n+1).fill(''));
+  renderTable();
+}
+
+/* Parse the table into numeric samples. Returns { data, errors }. */
+function parseData(){
+  const n = nIn(), k = nOut();
+  const data = [], errors = [];
+  state.rows.forEach((r, ri) => {
+    if (r.slice(0, n+1).every(c => String(c == null ? '' : c).trim() === '')) return;  // blank row
+    const x = [];
+    for (let i = 0; i < n; i++){
+      const v = parseFloat(r[i]);
+      if (!isFinite(v)){ errors.push('row ' + (ri+1) + ': ' + colName(i) + ' is not a number'); return; }
+      x.push(v);
+    }
+    const y = parseInt(r[n]);
+    if (!isFinite(y) || y < 0 || y >= k){
+      errors.push('row ' + (ri+1) + ': class must be an integer 0…' + (k-1));
+      return;
+    }
+    data.push({ x, y, row: ri });
+  });
+  return { data, errors };
+}
+
+/* ---- train/test split ---- */
+function resplit(){
+  const parsed = parseData();
+  const data = parsed.data;
+  if ($('splitMode').value === 'same'){
+    state.split = { train: data, test: data };
+  } else {
+    const rng = makeRng((parseInt($('seed').value) || 0) + 999);
+    const idx = data.map((_, i) => i);
+    for (let i = idx.length - 1; i > 0; i--){
+      const j = Math.floor(rng()*(i+1));
+      const t = idx[i]; idx[i] = idx[j]; idx[j] = t;
+    }
+    const nTrain = Math.max(1, Math.round(data.length * (+$('split').value)/100));
+    state.split = { train: idx.slice(0, nTrain).map(i => data[i]),
+                    test:  idx.slice(nTrain).map(i => data[i]) };
+  }
+  fitNorm();
+  updateSplitInfo();
+}
+
+function fitNorm(){
+  const train = state.split ? state.split.train : [];
+  const n = nIn();
+  if (!$('standardize').checked || !train.length){ state.norm = null; return; }
+  const mean = new Array(n).fill(0), std = new Array(n).fill(0);
+  for (const s of train) for (let i = 0; i < n; i++) mean[i] += s.x[i];
+  for (let i = 0; i < n; i++) mean[i] /= train.length;
+  for (const s of train) for (let i = 0; i < n; i++) std[i] += (s.x[i]-mean[i])*(s.x[i]-mean[i]);
+  for (let i = 0; i < n; i++) std[i] = Math.sqrt(std[i]/train.length) || 1;
+  state.norm = { mean, std };
+}
+function normalize(x){
+  if (!state.norm) return x.slice();
+  return x.map((v, i) => (v - state.norm.mean[i]) / state.norm.std[i]);
+}
+function normSet(set){ return set.map(s => ({ x: normalize(s.x), y: s.y, raw: s.x })); }
+
+function updateSplitInfo(){
+  const parsed = parseData();
+  const sp = state.split || { train: [], test: [] };
+  $('splitInfo').textContent = parsed.data.length + ' usable samples — ' +
+    sp.train.length + ' train / ' + sp.test.length + ' test' +
+    ($('splitMode').value === 'same' ? ' (identical sets)' : '');
+  const m = $('dataMsg');
+  const errors = parsed.errors;
+  if (errors.length){
+    m.className = 'msg err';
+    m.textContent = errors.slice(0,3).join(' · ') +
+                    (errors.length > 3 ? ' · +' + (errors.length-3) + ' more' : '');
+  } else { m.className = 'msg'; m.textContent = ''; }
+}
+
+/* ---- net lifecycle ---- */
+function resetNet(){
+  const rng = makeRng(parseInt($('seed').value) || 1);
+  state.net = makeNet(layerSizes(), $('act').value, rng);
+  state.history = [];
+  state.epoch = 0;
+  state.probe = null;
+  state.sel = null;
+  $('mEpoch').textContent = '0';
+  $('mTrainLoss').textContent = '—';
+  $('mTrainAcc').textContent = '—';
+  $('mTestAcc').textContent = '—';
+  const sz = layerSizes();
+  const params = sz.slice(1).reduce((a, c, i) => a + c*(sz[i]+1), 0);
+  $('archMsg').className = 'msg';
+  $('archMsg').textContent = sz.join(' → ') + '  ·  ' + params + ' parameters';
+  $('predOut').textContent = '—';
+  drawChart(); drawNet(); renderInspector(); renderConfusion();
+}
+
+/* ============================================================
+   Training loop (chunked so the UI stays responsive)
+   ============================================================ */
+let rafId = null;
+function startTraining(){
+  const parsed = parseData();
+  const msg = $('trainMsg');
+  if (!parsed.data.length){ msg.className='msg err'; msg.textContent='No usable data rows.'; return; }
+  if (parsed.errors.length){ msg.className='msg err'; msg.textContent='Fix the dataset errors first.'; return; }
+  resplit();
+  if (!state.split.train.length){ msg.className='msg err'; msg.textContent='Training split is empty.'; return; }
+  if (!state.net || state.net.sizes.join() !== layerSizes().join() || state.net.act !== $('act').value) resetNet();
+
+  const train = normSet(state.split.train);
+  const test  = normSet(state.split.test);
+  const lr = parseFloat($('lr').value) || 0.01;
+  const batch = Math.max(0, parseInt($('batch').value) || 0);
+  const totalEpochs = Math.max(1, parseInt($('epochs').value) || 1);
+  const rng = makeRng((parseInt($('seed').value) || 1) + state.epoch + 7);
+  const every = Math.max(1, Math.floor(totalEpochs/200));
+
+  state.running = true;
+  msg.className = 'msg'; msg.textContent = 'Training…';
+  let done = 0;
+
+  function chunk(){
+    if (!state.running){ finish('Stopped at epoch ' + state.epoch + '.'); return; }
+    const t0 = performance.now();
+    while (done < totalEpochs && performance.now() - t0 < 24){
+      trainEpoch(state.net, train, lr, batch, rng);
+      state.epoch++; done++;
+      if (done % every === 0 || done === totalEpochs){
+        const tr = evaluate(state.net, train), te = evaluate(state.net, test);
+        state.history.push({ epoch: state.epoch, trainLoss: tr.loss, trainAcc: tr.acc, testAcc: te.acc });
+      }
+    }
+    updateMetrics(); drawChart(); drawNet();
+    if (done < totalEpochs) rafId = requestAnimationFrame(chunk);
+    else finish('Done — ' + totalEpochs + ' epochs.');
+  }
+  function finish(text){
+    state.running = false;
+    refreshProbe();
+    drawNet(); renderInspector(); renderConfusion(); updateMetrics();
+    msg.className = 'msg ok'; msg.textContent = text;
+  }
+  rafId = requestAnimationFrame(chunk);
+}
+
+function updateMetrics(){
+  $('mEpoch').textContent = state.epoch;
+  const h = state.history[state.history.length-1];
+  if (!h) return;
+  const pct = v => isFinite(v) ? (v*100).toFixed(1) + '%' : '—';
+  $('mTrainLoss').textContent = h.trainLoss.toFixed(4);
+  $('mTrainAcc').textContent = pct(h.trainAcc);
+  $('mTestAcc').textContent = pct(h.testAcc);
+}
+
+/* ============================================================
+   Loss / accuracy chart
+   ============================================================ */
+function fitCanvas(cv){
+  const dpr = window.devicePixelRatio || 1;
+  const w = cv.clientWidth, h = cv.clientHeight || 260;
+  if (cv.width !== Math.round(w*dpr) || cv.height !== Math.round(h*dpr)){
+    cv.width = Math.round(w*dpr); cv.height = Math.round(h*dpr);
+  }
+  const ctx = cv.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  return { ctx: ctx, w: w, h: h };
+}
+
+function drawChart(){
+  const c = fitCanvas($('lossChart'));
+  const ctx = c.ctx, w = c.w, h = c.h;
+  const pad = { l: 46, r: 46, t: 14, b: 26 };
+  const H = state.history;
+  ctx.strokeStyle = '#c9ced7'; ctx.lineWidth = 1;
+  ctx.strokeRect(pad.l, pad.t, w-pad.l-pad.r, h-pad.t-pad.b);
+  ctx.fillStyle = '#5f6875'; ctx.font = '11px system-ui';
+  if (!H.length){ ctx.fillText('Train to see the loss / accuracy curves', pad.l+10, pad.t+20); return; }
+
+  let maxLoss = 0.0001;
+  for (const p of H) if (p.trainLoss > maxLoss) maxLoss = p.trainLoss;
+  const xs = e => pad.l + (e/Math.max(1, state.epoch)) * (w-pad.l-pad.r);
+  const yLoss = v => pad.t + (1 - v/maxLoss) * (h-pad.t-pad.b);
+  const yAcc  = v => pad.t + (1 - v) * (h-pad.t-pad.b);
+
+  const line = (key, color, ymap, dash) => {
+    ctx.beginPath(); ctx.strokeStyle = color; ctx.lineWidth = 1.7;
+    ctx.setLineDash(dash || []);
+    let started = false;
+    for (const p of H){
+      const v = p[key];
+      if (!isFinite(v)) continue;
+      const X = xs(p.epoch), Y = ymap(v);
+      if (!started){ ctx.moveTo(X, Y); started = true; } else ctx.lineTo(X, Y);
+    }
+    ctx.stroke(); ctx.setLineDash([]);
+  };
+  line('testAcc',   '#d97706', yAcc, [4,3]);
+  line('trainAcc',  '#15803d', yAcc);
+  line('trainLoss', '#2563eb', yLoss);
+
+  ctx.fillStyle = '#5f6875';
+  ctx.fillText(maxLoss.toFixed(2), 6, pad.t+10);
+  ctx.fillText('0', 6, h-pad.b);
+  ctx.textAlign = 'right';
+  ctx.fillText('100%', w-6, pad.t+10);
+  ctx.fillText('0%', w-6, h-pad.b);
+  ctx.textAlign = 'center';
+  ctx.fillText('epoch ' + state.epoch, (pad.l + w - pad.r)/2, h-8);
+  ctx.textAlign = 'left';
+}
+
+/* ============================================================
+   Network diagram
+   ============================================================ */
+const NAME_FONT = '12px ui-monospace,SFMono-Regular,Menlo,monospace';
+
+function maxAbsWeight(net){
+  let m = 1e-6;
+  for (const layer of net.W) for (const row of layer) for (const v of row) m = Math.max(m, Math.abs(v));
+  return m;
+}
+
+function layoutNet(w, h, padL, padR){
+  const net = state.net;
+  const pad = { l: padL || 62, r: padR || 62, t: 38, b: 24 };
+  const cols = net.sizes.length;
+  let widest = 1;
+  for (const s of net.sizes) if (s > widest) widest = s;
+
+  const avail = h - pad.t - pad.b;                                  // vertical room for neurons
+  const colGap = cols > 1 ? (w - pad.l - pad.r)/(cols-1) : w;       // horizontal room per layer
+  // Circles as big as the spacing allows, so a small net really fills the picture.
+  // Each neuron of the widest layer gets a slot of avail/widest; the circle takes 42% of it,
+  // which both keeps 2r inside the slot and leaves a visible gap between neighbours.
+  const r = Math.max(5, Math.min(34, colGap*0.30, (avail/widest)*0.42));
+  // Spread the centres over what is left after reserving the top and bottom radius.
+  const gap = widest === 1 ? 0 : Math.min((avail - 2*r)/(widest-1), r*3);
+  const midY = pad.t + avail/2;
+
+  const nodes = [];
+  for (let l = 0; l < cols; l++){
+    const x = cols === 1 ? w/2 : pad.l + l*(w-pad.l-pad.r)/(cols-1);
+    const cnt = net.sizes[l];
+    const y0 = midY - gap*(cnt-1)/2;
+    const col = [];
+    for (let i = 0; i < cnt; i++) col.push({ x: x, y: y0 + i*gap, l: l, i: i });
+    nodes.push(col);
+  }
+  return { nodes: nodes, r: r, pad: pad };
+}
+
+function drawNet(){
+  const c = fitCanvas($('netView'));
+  const ctx = c.ctx, w = c.w, h = c.h;
+  const net = state.net;
+  if (!net) return;
+  // Input and answer names are drawn outside their circles, so they need margin - but the
+  // margin changes the radius, so lay out once to get r, then again with the real margins.
+  ctx.font = NAME_FONT;
+  let inW = 0, outW = 0;
+  for (let i = 0; i < net.sizes[0]; i++) inW = Math.max(inW, ctx.measureText(neuronName(0, i)).width);
+  for (let i = 0; i < net.sizes[net.L]; i++) outW = Math.max(outW, ctx.measureText(neuronName(net.L, i)).width);
+  const first = layoutNet(w, h);
+  const cap = w*0.30;
+  const g = layoutNet(w, h,
+    Math.min(cap, Math.max(62, first.r + inW + 16)),
+    Math.min(cap, Math.max(62, first.r + outW + 16)));
+  state.geom = g;
+  const maxW = maxAbsWeight(net);
+  const sel = state.sel;
+
+  // --- connections ---
+  for (let l = 0; l < net.L; l++){
+    for (let i = 0; i < net.W[l].length; i++){
+      for (let j = 0; j < net.W[l][i].length; j++){
+        const a = g.nodes[l][j], b = g.nodes[l+1][i];
+        const wv = net.W[l][i][j];
+        const mag = Math.abs(wv)/maxW;
+        const isSel = sel && sel.kind === 'edge' && sel.l === l && sel.i === i && sel.j === j;
+        ctx.beginPath();
+        ctx.moveTo(a.x + g.r, a.y);
+        ctx.lineTo(b.x - g.r, b.y);
+        ctx.lineWidth = isSel ? 4 : Math.max(0.4, mag*3.2);
+        ctx.strokeStyle = isSel ? '#111827'
+          : (wv >= 0 ? 'rgba(37,99,235,' : 'rgba(220,38,38,') + (0.12 + 0.78*mag) + ')';
+        ctx.stroke();
+      }
+    }
+  }
+
+  // --- neurons ---
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  for (let l = 0; l < g.nodes.length; l++){
+    let layerMax = 1e-6;
+    if (state.probe) for (const v of state.probe.as[l]) layerMax = Math.max(layerMax, Math.abs(v));
+    for (const nd of g.nodes[l]){
+      const isSel = sel && sel.kind === 'node' && sel.l === l && sel.i === nd.i;
+      let fill = '#ffffff';
+      if (state.probe){
+        // Shade by activation: blue positive, red negative, near-white at zero.
+        const a = state.probe.as[l][nd.i];
+        const t = Math.min(1, Math.abs(a)/layerMax);
+        fill = (a >= 0 ? 'rgba(37,99,235,' : 'rgba(220,38,38,') + (0.08 + 0.62*t) + ')';
+      }
+      ctx.beginPath();
+      ctx.arc(nd.x, nd.y, g.r, 0, Math.PI*2);
+      ctx.fillStyle = fill; ctx.fill();
+      ctx.lineWidth = isSel ? 3 : 1.2;
+      ctx.strokeStyle = isSel ? '#111827' : '#6b7280';
+      ctx.stroke();
+      const mono = 'px ui-monospace,SFMono-Regular,Menlo,monospace';
+      const name = neuronName(l, nd.i);
+      // For an input circle show the number the user actually typed, not the scaled one.
+      const val = state.probe ? (l === 0 ? state.probe.x[nd.i] : state.probe.as[l][nd.i]) : null;
+      ctx.fillStyle = '#111827';
+      if (l === 0 || l === net.L){
+        ctx.font = NAME_FONT;
+        ctx.textAlign = l === 0 ? 'right' : 'left';
+        ctx.fillText(name, l === 0 ? nd.x - g.r - 8 : nd.x + g.r + 8, nd.y);
+        ctx.textAlign = 'center';
+        if (val !== null && g.r >= 12){
+          ctx.font = Math.round(Math.min(15, g.r*0.55)) + mono;
+          ctx.fillText(val.toFixed(2), nd.x, nd.y);
+        }
+      } else if (val !== null && g.r >= 15){
+        ctx.font = Math.round(g.r*0.58) + mono;
+        ctx.fillText(name, nd.x, nd.y - g.r*0.30);
+        ctx.font = Math.round(g.r*0.50) + mono;
+        ctx.fillText(val.toFixed(2), nd.x, nd.y + g.r*0.38);
+      } else if (g.r >= 10){
+        ctx.font = Math.round(Math.min(16, g.r*0.8)) + mono;
+        ctx.fillText(val !== null ? val.toFixed(2) : name, nd.x, nd.y);
+      }
+    }
+  }
+
+  // --- layer captions ---
+  ctx.font = '12px system-ui';
+  ctx.fillStyle = '#5f6875';
+  for (let l = 0; l < g.nodes.length; l++){
+    const x = g.nodes[l][0].x;
+    const name = l === 0 ? 'inputs'
+               : (l === net.L ? 'answers' : 'hidden ' + l + ' · ' + net.act);
+    ctx.fillText(name + ' (' + net.sizes[l] + ')', x, 16);
+  }
+  ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+}
+
+/* Hit-test: neurons win over connections. */
+function pickAt(mx, my){
+  const g = state.geom, net = state.net;
+  if (!g || !net) return null;
+  for (let l = 0; l < g.nodes.length; l++){
+    for (const nd of g.nodes[l]){
+      const dx = mx-nd.x, dy = my-nd.y;
+      if (dx*dx + dy*dy <= (g.r+4)*(g.r+4)) return { kind:'node', l: l, i: nd.i };
+    }
+  }
+  let best = null, bestD = 6;
+  for (let l = 0; l < net.L; l++){
+    for (let i = 0; i < net.W[l].length; i++){
+      for (let j = 0; j < net.W[l][i].length; j++){
+        const a = g.nodes[l][j], b = g.nodes[l+1][i];
+        const d = distToSeg(mx, my, a.x, a.y, b.x, b.y);
+        if (d < bestD){ bestD = d; best = { kind:'edge', l: l, i: i, j: j }; }
+      }
+    }
+  }
+  return best;
+}
+function distToSeg(px, py, x1, y1, x2, y2){
+  const dx = x2-x1, dy = y2-y1;
+  const len2 = dx*dx + dy*dy || 1;
+  let t = ((px-x1)*dx + (py-y1)*dy)/len2;
+  t = Math.max(0, Math.min(1, t));
+  const cx = x1 + t*dx, cy = y1 + t*dy;
+  return Math.sqrt((px-cx)*(px-cx) + (py-cy)*(py-cy));
+}
+
+/* ============================================================
+   Inspector - read and edit individual parameters
+   ============================================================ */
+function renderInspector(){
+  const box = $('inspector');
+  const net = state.net, sel = state.sel;
+  if (!net){ box.innerHTML = '<p class="sub">No network.</p>'; return; }
+
+  if (!sel){
+    let sum = 0, cnt = 0;
+    for (const L of net.W) for (const r of L) for (const v of r){ sum += Math.abs(v); cnt++; }
+    box.innerHTML =
+      '<h3>Nothing selected</h3>' +
+      '<p class="sub">Click a circle to see the numbers going into it, or click a line to see that ' +
+      'one number. You can type new values and watch what happens.</p>' +
+      '<div class="kv"><span>layers</span><span>' + net.sizes.join(' → ') + '</span></div>' +
+      '<div class="kv"><span>hidden activation</span><span>' + net.act + '</span></div>' +
+      '<div class="kv"><span>max |w|</span><span>' + maxAbsWeight(net).toFixed(4) + '</span></div>' +
+      '<div class="kv"><span>mean |w|</span><span>' + (cnt ? (sum/cnt).toFixed(4) : '—') + '</span></div>' +
+      '<div class="kv"><span>weights / biases</span><span>' + cnt + ' / ' +
+        net.b.reduce((a, c) => a + c.length, 0) + '</span></div>';
+    return;
+  }
+
+  if (sel.kind === 'edge'){
+    const wv = net.W[sel.l][sel.i][sel.j];
+    box.innerHTML =
+      '<h3>' + neuronName(sel.l, sel.j) + ' &rarr; ' + neuronName(sel.l+1, sel.i) + '</h3>' +
+      '<p class="sub">how strongly ' + neuronName(sel.l, sel.j) + ' pushes on ' +
+      neuronName(sel.l+1, sel.i) + '</p>' +
+      '<table class="wtable"><tr><td class="lab">value</td>' +
+      '<td><input id="wEdit" type="number" step="any" value="' + wv + '"></td></tr></table>' +
+      '<p class="hint">Editing changes the live network — metrics update immediately.</p>';
+    $('wEdit').addEventListener('change', e => {
+      const v = parseFloat(e.target.value);
+      if (isFinite(v)){ net.W[sel.l][sel.i][sel.j] = v; afterEdit(); }
+    });
+    return;
+  }
+
+  // --- node ---
+  const l = sel.l, i = sel.i;
+  const isInput = l === 0, isOutput = l === net.L;
+  const nm = neuronName(l, i);
+  let html = '<h3>' + (isInput ? 'Input' : isOutput ? 'Answer' : 'Hidden neuron') + ' ' + nm + '</h3>';
+  html += '<p class="sub">' +
+    (isInput ? 'column ' + (i+1) + ' of your table' + (state.norm ? ', scaled before it enters the net' : '')
+     : isOutput ? 'how sure it is that the answer is ' + i
+     : 'activation: ' + net.act) + '</p>';
+
+  if (state.probe){
+    if (isInput){
+      html += '<div class="kv"><span>you typed</span><span>' + fmt(state.probe.x[i]) + '</span></div>';
+      if (state.norm){
+        html += '<div class="kv"><span>after scaling</span><span>' + fmt(state.probe.as[0][i]) + '</span></div>';
+        html += '<p class="hint">Scaling subtracts this column\'s average and divides by its spread, ' +
+                'so a typed 0 can become a negative number. Turn it off in Expert settings.</p>';
+      }
+    } else {
+      html += '<div class="kv"><span>before activation (z)</span><span>' + fmt(state.probe.zs[l][i]) + '</span></div>';
+      html += '<div class="kv"><span>after activation (a)</span><span>' + fmt(state.probe.as[l][i]) + '</span></div>';
+    }
+  }
+
+  if (!isInput){
+    html += '<table class="wtable" style="margin-top:8px">' +
+            '<tr><td class="lab">bias</td>' +
+            '<td><input class="pEdit" data-kind="b" type="number" step="any" value="' + net.b[l-1][i] + '"></td></tr>';
+    net.W[l-1][i].forEach((wv, j) => {
+      html += '<tr><td class="lab">from ' + neuronName(l-1, j) + '</td>' +
+              '<td><input class="pEdit" data-kind="w" data-j="' + j +
+              '" type="number" step="any" value="' + wv + '"></td></tr>';
+    });
+    html += '</table>';
+  }
+
+  if (!isOutput){
+    html += '<p class="sub" style="margin:10px 0 4px">outgoing weights</p><table class="wtable">';
+    net.W[l].forEach((row, k) => {
+      html += '<tr><td class="lab">to ' + neuronName(l+1, k) + '</td>' +
+              '<td><input class="oEdit" data-k="' + k +
+              '" type="number" step="any" value="' + row[i] + '"></td></tr>';
+    });
+    html += '</table>';
+  }
+  box.innerHTML = html;
+
+  box.querySelectorAll('.pEdit').forEach(inp => inp.addEventListener('change', e => {
+    const v = parseFloat(e.target.value);
+    if (!isFinite(v)) return;
+    if (e.target.dataset.kind === 'b') net.b[l-1][i] = v;
+    else net.W[l-1][i][+e.target.dataset.j] = v;
+    afterEdit();
+  }));
+  box.querySelectorAll('.oEdit').forEach(inp => inp.addEventListener('change', e => {
+    const v = parseFloat(e.target.value);
+    if (isFinite(v)){ net.W[l][+e.target.dataset.k][i] = v; afterEdit(); }
+  }));
+}
+
+/* Recompute everything after a hand-edited parameter. */
+function afterEdit(){
+  if (state.split){
+    const tr = evaluate(state.net, normSet(state.split.train));
+    const te = evaluate(state.net, normSet(state.split.test));
+    state.history.push({ epoch: state.epoch, trainLoss: tr.loss, trainAcc: tr.acc, testAcc: te.acc });
+    updateMetrics(); drawChart(); renderConfusion();
+  }
+  refreshProbe();
+  drawNet();
+}
+
+/* ============================================================
+   Confusion matrix
+   ============================================================ */
+function renderConfusion(){
+  const box = $('confusion');
+  const test = state.split ? normSet(state.split.test) : [];
+  if (!state.net || !test.length){
+    box.innerHTML = '<p class="hint">Train the network to see the confusion matrix.</p>'; return;
+  }
+  const k = nOut();
+  const m = [];
+  for (let i = 0; i < k; i++) m.push(new Array(k).fill(0));
+  for (const s of test) m[s.y][argmax(predict(state.net, s.x))]++;
+  let html = '<table><thead><tr><th>actual \\ predicted</th>';
+  for (let j = 0; j < k; j++) html += '<th>' + j + '</th>';
+  html += '</tr></thead><tbody>';
+  for (let i = 0; i < k; i++){
+    html += '<tr><th>' + i + '</th>';
+    for (let j = 0; j < k; j++){
+      const v = m[i][j];
+      const bg = v === 0 ? 'transparent' : (i === j ? 'rgba(21,128,61,.14)' : 'rgba(185,28,28,.14)');
+      html += '<td style="text-align:center;padding:5px 8px;background:' + bg + '">' + v + '</td>';
+    }
+    html += '</tr>';
+  }
+  box.innerHTML = html + '</tbody></table>';
+}
+
+/* ============================================================
+   Probe / predict
+   ============================================================ */
+function renderPredictInputs(){
+  const box = $('predInputs');
+  box.innerHTML = '';
+  for (let i = 0; i < nIn(); i++){
+    const row = document.createElement('div');
+    row.className = 'row';
+    row.innerHTML = '<label>' + esc(colName(i)) + '</label>' +
+                    '<input type="number" step="any" class="predIn" value="0">';
+    box.appendChild(row);
+  }
+}
+function doPredict(){
+  if (!state.net){ $('predOut').textContent = 'No network yet.'; return; }
+  const x = Array.prototype.map.call(document.querySelectorAll('.predIn'), i => parseFloat(i.value) || 0);
+  const fp = forward(state.net, normalize(x));
+  state.probe = { x: x, zs: fp.zs, as: fp.as };
+  const p = fp.as[state.net.L];
+  const c = argmax(p);
+  $('predOut').textContent = 'class ' + c + '  (p = ' + p[c].toFixed(3) + ')\n' +
+    p.map((v, i) => '  ' + i + ': ' + v.toFixed(4) + '  ' + '█'.repeat(Math.round(v*22))).join('\n');
+  drawNet(); renderInspector();
+}
+/* Re-run the stored probe after the weights change. */
+function refreshProbe(){
+  if (!state.probe || !state.net) return;
+  if (state.probe.x.length !== state.net.sizes[0]){ state.probe = null; return; }
+  const fp = forward(state.net, normalize(state.probe.x));
+  state.probe.zs = fp.zs; state.probe.as = fp.as;
+}
+
+/* ============================================================
+   Example datasets
+   ============================================================ */
+function loadPreset(name){
+  const rng = makeRng(7);
+  const rows = [];
+  const push = (x, y) => rows.push(x.map(v => (Math.round(v*1000)/1000).toString()).concat([String(y)]));
+  if (name === 'xor'){
+    $('nIn').value = 2; $('nOut').value = 2;
+    push([0,0],0); push([0,1],1); push([1,0],1); push([1,1],0);
+    for (let i = 0; i < 60; i++){
+      const a = rng() < .5 ? 0 : 1, b = rng() < .5 ? 0 : 1;
+      push([a + (rng()-.5)*0.4, b + (rng()-.5)*0.4], a ^ b);
+    }
+  } else if (name === 'circle'){
+    $('nIn').value = 2; $('nOut').value = 2;
+    for (let i = 0; i < 120; i++){
+      const inner = i % 2 === 0;
+      const r = inner ? rng()*0.9 : 1.7 + rng()*0.9;
+      const t = rng()*Math.PI*2;
+      push([r*Math.cos(t), r*Math.sin(t)], inner ? 0 : 1);
+    }
+  } else if (name === 'blobs3'){
+    $('nIn').value = 2; $('nOut').value = 3;
+    const g = makeGauss(rng);
+    const centers = [[-2,-1],[2,-1],[0,2.2]];
+    for (let i = 0; i < 120; i++){
+      const c = i % 3;
+      push([centers[c][0] + g()*0.6, centers[c][1] + g()*0.6], c);
+    }
+  } else if (name === 'spiral'){
+    $('nIn').value = 2; $('nOut').value = 2;
+    for (let c = 0; c < 2; c++){
+      for (let i = 0; i < 70; i++){
+        const r = i/70*3.2;
+        const t = c*Math.PI + i/70*3.4 + (rng()-.5)*0.25;
+        push([r*Math.sin(t), r*Math.cos(t)], c);
+      }
+    }
+  }
+  state.rows = rows;
+  state.colNames = [];
+  renderHiddenSizes(); renderTable(); renderPredictInputs(); resplit(); resetNet();
+}
+
+/* ============================================================
+   Wiring
+   ============================================================ */
+$('nIn').addEventListener('input', () => {
+  const n = nIn();
+  state.rows.forEach(r => { while (r.length < n+1) r.splice(r.length-1, 0, ''); r.length = n+1; });
+  renderTable(); renderPredictInputs(); resplit(); resetNet();
+});
+$('nOut').addEventListener('input', () => { resplit(); resetNet(); });
+$('nHidden').addEventListener('input', () => { renderHiddenSizes(); resetNet(); });
+$('act').addEventListener('change', resetNet);
+$('seed').addEventListener('input', () => { resplit(); resetNet(); });
+$('standardize').addEventListener('change', () => { fitNorm(); refreshProbe(); drawNet(); });
+$('splitMode').addEventListener('change', () => {
+  $('splitRow').style.display = $('splitMode').value === 'same' ? 'none' : 'flex';
+  resplit();
+});
+$('split').addEventListener('input', () => { $('splitVal').textContent = $('split').value + '%'; resplit(); });
+
+$('btnTrain').addEventListener('click', startTraining);
+$('btnStop').addEventListener('click', () => { state.running = false; if (rafId) cancelAnimationFrame(rafId); });
+$('btnReset').addEventListener('click', () => { state.running = false; resetNet(); $('trainMsg').textContent = ''; });
+$('btnAddRow').addEventListener('click', () => { addRows(1); resplit(); });
+$('btnAddRows').addEventListener('click', () => { addRows(5); resplit(); });
+$('btnClear').addEventListener('click', () => { state.rows = []; addRows(4); resplit(); });
+$('preset').addEventListener('change', e => { if (e.target.value){ loadPreset(e.target.value); e.target.value = ''; } });
+/* Parse pasted text into table rows. Returns an error string, or null on success.
+   A <textarea> is used rather than prompt(): prompt() is a single-line input and the
+   browser strips the line breaks out of anything pasted into it. */
+function loadPastedRows(txt){
+  const lines = String(txt).split(/\r?\n/).map(l => l.trim()).filter(l => l.length);
+  if (!lines.length) return 'Nothing to load — the box is empty.';
+  let rows = lines.map(l => l.split(/[\s,;]+/).filter(c => c.length));
+
+  // Drop a heading line (any non-numeric cell in the first row, when more rows follow)
+  // and reuse it as the column names.
+  let header = null;
+  if (rows.length > 1 && rows[0].some(c => !isFinite(parseFloat(c)))){ header = rows[0]; rows = rows.slice(1); }
+  if (!rows.length) return 'Only a heading line found — add some data rows.';
+
+  const cols = rows[0].length;
+  if (cols < 2) return 'Each line needs at least one input and one answer, e.g. "1.5, 0".';
+  const bad = rows.findIndex(r => r.length !== cols);
+  if (bad >= 0) return 'Line ' + (bad+1) + ' has ' + rows[bad].length + ' values but the first line has ' + cols + '.';
+
+  if (cols - 1 > 12) return 'That is ' + (cols-1) + ' inputs per line; this page handles at most 12.';
+
+  let maxLabel = 0;
+  for (const r of rows) maxLabel = Math.max(maxLabel, parseInt(r[r.length-1]) || 0);
+  if (maxLabel > 9) return 'The biggest answer found is ' + maxLabel + '; answers must be 0 to 9.';
+  $('nIn').value = cols - 1;
+  $('nOut').value = Math.max(2, maxLabel + 1);
+  state.colNames = header ? header.slice(0, cols-1) : [];
+  state.rows = rows;
+  renderTable(); renderPredictInputs(); resplit(); resetNet();
+  return null;
+}
+
+function closeCsv(){ $('csvModal').classList.remove('open'); }
+$('btnCsv').addEventListener('click', () => {
+  $('csvMsg').textContent = '';
+  $('csvModal').classList.add('open');
+  $('csvText').focus();
+});
+$('csvCancel').addEventListener('click', closeCsv);
+$('csvModal').addEventListener('click', e => { if (e.target === $('csvModal')) closeCsv(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeCsv(); });
+$('csvLoad').addEventListener('click', () => {
+  const err = loadPastedRows($('csvText').value);
+  if (err){ $('csvMsg').className = 'msg err'; $('csvMsg').textContent = err; }
+  else closeCsv();
+});
+$('btnPredict').addEventListener('click', doPredict);
+$('btnClearProbe').addEventListener('click', () => {
+  state.probe = null; $('predOut').textContent = '—'; drawNet(); renderInspector();
+});
+
+$('netView').addEventListener('click', e => {
+  const r = e.currentTarget.getBoundingClientRect();
+  state.sel = pickAt(e.clientX - r.left, e.clientY - r.top);
+  drawNet(); renderInspector();
+});
+$('netView').addEventListener('mousemove', e => {
+  const r = e.currentTarget.getBoundingClientRect();
+  e.currentTarget.style.cursor = pickAt(e.clientX - r.left, e.clientY - r.top) ? 'pointer' : 'default';
+});
+
+/* ---- Export of every bias and weight -----------------------------------
+   One row per neuron, layer by layer, neuron by neuron:
+   [bias, w_from_first_neuron_of_previous_layer, w_from_second, ...]
+   i.e. [[h0b,h0w0,h0w1],[h1b,...],...,[y0b,y0w0,...],[y1b,...]] */
+function exportRows(net){
+  const rows = [];
+  for (let l = 0; l < net.L; l++){
+    for (let i = 0; i < net.W[l].length; i++){
+      rows.push([net.b[l][i]].concat(net.W[l][i]));
+    }
+  }
+  return rows;
+}
+function exportCsv(net){
+  const rows = exportRows(net).map(r => '[' + r.join(',') + ']');
+  return '[' + rows.join(',\n') + ']\n';
+}
+$('btnExportCsv').addEventListener('click', () => {
+  if (!state.net) return;
+  const url = URL.createObjectURL(new Blob([exportCsv(state.net)], { type: 'text/csv' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'network-' + state.net.sizes.join('-') + '-epoch' + state.epoch + '.csv';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+});
+
+window.addEventListener('resize', () => { drawChart(); drawNet(); });
+
+/* boot */
+renderHiddenSizes();
+renderPredictInputs();
+loadPreset('xor');
+</script>
+</body>
+</html>
