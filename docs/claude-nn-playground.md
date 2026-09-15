@@ -830,3 +830,222 @@ Alternatives considered and rejected:
   result with `inputs[1] = 0`. Button-B dumps showed **post-reset** state, so they were misleading
   during debugging. If dumps are needed again, latch a `lastInputs[]` copy at calc time.
 - `neuron.ts` has the same pattern and was left untouched.
+
+## 2026-09-15 — FOUND (for real): writeNumber never triggers onLine
+
+The user supplied `nn.ts`, a version that **works**. Diffing it against `neuron.ts` gives the answer
+in one line.
+
+**Working `nn.ts` transmits with:**
+```typescript
+softSerial.writeLine(DigitalPin.P3, softSerial.BaudRate.Baud1200, convertToText(ownOutput))
+```
+**`neuron.ts` transmitted with `softSerial.writeNumber(...)`.**
+
+`softSerial.onLine` fires on a **NEWLINE**. `writeLine` appends one; `writeNumber` does not. The
+bytes went out on the wire — which is why the TX side always looked healthy and `out_x0` logged
+every time — but the receiver's handler was never triggered. Hence: transmit fine, reception zero,
+on every board, regardless of cable, ground, radio or display.
+
+Fixed in `neuron.ts` (3 call sites) and `softserial-test.ts` (1).
+
+**Rule: pair `softSerial.writeLine` with `softSerial.onLine`. `writeNumber` is for a reader that
+does not depend on line framing.**
+
+### Three wrong hypotheses before this (all mine, all cost a hardware round-trip)
+1. softSerial is a single device, last `onLine` wins — wrong, multiple pins work.
+2. `radio.setGroup` conflicts with softSerial timing — wrong, nn.js/nn.ts use radio too.
+3. The 5x5 matrix steals P0/P1/P2 — wrong, P0-P3 are independent of the display on the Calliope.
+
+Each was reasoned from plausible micro:bit-family behaviour instead of from the working code. **The
+fix was found in minutes once a known-good version was available to diff.** Ask for the working
+artefact first; it beats any amount of reasoning about what might be wrong.
+
+### Still differing from nn.ts, deliberately (watch if problems persist)
+- **`needed[]` vs `fanIn`.** nn.ts marks a slot needed when its weight arrives and waits only for
+  those (`haveAllInputs`), with **no `armed`/`calc` gate on the receive side** — it fires purely on
+  data arrival. `neuron.ts` uses `fanIn` from the sender plus an `armed` gate. If boards still fail
+  to fire, drop the `armed` gate first: a missed "calc" packet silences a board that nn.ts would
+  have run anyway.
+- nn.ts clears `received[]` **before** computing, so a line landing mid-computation counts toward
+  the next cycle. `neuron.ts` clears after firing (`clearRound`). nn.ts's order is the safer one.
+- nn.ts's y neurons skip the sigmoid (`getNeuronOutput()` raw) and compare against
+  `outputThreshold`; `neuron.ts` applies sigmoid to every layer. Monotonic, so the argmax is the
+  same — but the y board's printed numbers differ between the two.
+
+## 2026-09-15 — Matrix display restored, real images, cleanup
+
+### Matrix is back
+`basic.showLeds` / `showIcon` / `led.plot` are **instant**; only `showString`/`showNumber` scroll
+and block. The earlier `led.enable(false)` panic was based on a wrong pin-conflict theory (already
+retracted above), so the 5x5 matrix is fine to use. All RGB-LED status code removed.
+
+State on the matrix again: `?` unclaimed, the board's name once claimed, the No icon when a choice's
+value never arrived, and the choice picture on an x board.
+
+### Images: copied from input.ts, sent over radio
+The 9 real pictures were extracted programmatically from `input.ts` (4 for x0, 5 for x1) and put in
+`sender.ts`'s `inputPictures`, **verified byte-for-byte identical** to the originals. Note input.ts
+indexes choices from 1; `choiceIndex` here is 0-based, so they are shifted down by one.
+
+Per the user they travel **over radio**, not hardcoded on the boards, so the artwork can change
+without reflashing the neurons. `neuron.ts` stores them as 25-char strings (`choicePics`) and
+renders with `drawBits()` — `led.plot`/`unplot` per pixel, instant. `basic.showImage` is NOT used:
+it blocks. The `Image` type and `imageFromText()` are gone with it.
+
+### Removed while tidying
+- The RGB helpers `setRgb`/`rgbOff`/`flash` and every call.
+- `imageFromText()` and the `choiceImages: Image[]` array.
+- The unused `"reset"` radio message and its doc line.
+- Stale comments from the three retracted theories (softSerial single-device, radio timing,
+  display pin contention).
+
+### Verified (2026-09-15)
+Both files brace-balanced. `neuron.ts`: exactly one `basic.forever`, one `onReceivedValue`, one
+`onReceivedString`, three `softSerial.onLine`, two `onButtonEvent`; zero `writeNumber`, three
+`writeLine`; **no dead functions, no unused variables, no blocking display call inside any radio or
+softSerial handler**. All 9 pictures match `input.ts` exactly.
+
+## 2026-09-15 — Pictures never arrived: radio.sendString caps payload at 19 chars
+
+x boards kept showing the middle-row dots, which is the explicit "value arrived, picture did not"
+fallback — so `choicePics` was empty.
+
+**Cause:** `radio.sendString` carries at most **19 characters**. The message
+`"<name>p<k>:<25 bits>"` is **30**, so it arrived truncated (`"x0p0:11011110110000"`, 14 bits) and
+the receiver's own `bits.length < 25` guard rejected it silently. The identity strings are 12-14
+characters, which is exactly why those always worked and only the pictures failed.
+
+**Fix: one ROW per message.** `"<name>p<k>r<y>:<5 bits>"` = **12 characters**. The receiver seeds a
+picture with 25 dark pixels on first sight and patches in each row as it lands, so a picture can be
+drawn as soon as any row of it arrives rather than needing all five.
+
+Same root cause as the serial-number bug (a radio primitive's limit silently mangling the payload):
+**check the transport's size limit before assuming a message arrives intact.**
+
+### Verified (2026-09-15)
+All 9 pictures still byte-identical to `input.ts`; longest per-row message 12 chars (limit 19);
+all 9 reassemble exactly from their 5 rows. `neuron.ts` structure unchanged and balanced.
+
+## 2026-09-15 — Pictures packed into ONE message again
+
+The per-row split (5 messages per picture) was replaced with **bit packing**, so a whole picture
+fits one `radio.sendString` after all.
+
+**Scheme:** 5 bits per character, one character per row — character code `95 + rowValue(0..31)`.
+`"<name>p<k>:<5 chars>"` = **10 characters**, well inside the 19-char limit.
+
+**Why base 95:** codes 95..126 (`_` through `~`) are 32 consecutive printable characters containing
+no `":"` (the field separator), no quote and no backslash — nothing to escape, nothing to confuse
+the parser. Base 65 was rejected because its range includes backslash (92).
+
+Pictures stay **1 bit per pixel, on/off only** — same as `input.ts`. No brightness is encoded
+(the user confirmed it is not wanted). For reference if it is ever revisited: 2-bit/4-level
+brightness would be 50 bits = 10 payload chars and would still fit one message; 3-bit would not.
+
+`packPicture()` lives in `sender.ts`, the matching unpack is inline in `neuron.ts`'s string handler.
+
+### Verified (2026-09-15)
+Both implementations transcribed from the actual files and run against each other: all 9 pictures
+round-trip **exactly**, every message is 10 chars, and no payload contains a separator/quote/
+backslash. Picture traffic per `sendAll` is back to 9 messages (was 45 per-row).
+Both files brace-balanced; `neuron.ts` handler counts unchanged, no dead functions.
+
+## 2026-09-15 — packImage(): author pictures as MakeCode Images
+
+Added to `sender.ts` so pictures can be drawn in MakeCode's visual grid rather than typed as
+"0"/"1" text:
+
+```typescript
+sendPicture("x0", 0, images.createImage(`
+    . . . . .
+    . # . . #
+    . # . . #
+    . . # # #
+    . . . . .
+    `))
+```
+
+`packImage(img)` reads the picture back with **`img.pixel(x, y)`** and emits the same wire format as
+`packPicture` — 5 bits per character, one character per row, base 95. `sendPicture(name, k, img)`
+wraps it with the `"<name>p<k>:"` header and transmits; the whole message is 10 characters.
+
+Both helpers coexist: `inputPictures` (text) still drives `sendInput()`'s bulk push, while
+`sendPicture` is for sending an individual image ad hoc. Neither is preferred — text is easier to
+diff, Images are easier to draw.
+
+### Verified (2026-09-15)
+`packImage` and `packPicture` transcribed from the file and run against a simulated
+`images.createImage`/`Image.pixel`: **byte-identical output for all 9 real pictures**, every one
+round-trips through the receiver's unpack, and the user's own example encodes to `"x0p0:_qq{_"`
+(10 chars) and decodes back to exactly the drawn shape.
+
+## 2026-09-15 — Fixed: `colon` declared twice in the radio string handler
+
+`let colon` appeared at neuron.ts:352 (the picture branch) and again further down, left behind when
+the picture branch was restored after the packing change. Same function scope, so it is a
+redeclaration error. The second one was also dead — the identity path only needs `eq`. Removed.
+
+A block-scope-aware scan of every function and handler now reports no other duplicate declarations.
+(An earlier naive scan flagged two sequential `for (let i = ...)` loops in the button-B handler;
+those are correctly scoped to their own blocks and are fine.)
+
+## 2026-09-15 — Output-neuron win messages, configured by the sender
+
+Ported nn.ts's behaviour (y0 -> green flash + "nicht frech", y1 -> red flash + "frech" when the
+output exceeds a threshold), but with all of it **sent over radio** instead of hardcoded, so the
+text, colour and threshold change without reflashing the neurons.
+
+### sender.ts, new section "2a. THE OUTPUT LAYER"
+`outputMessages`, `outputColors` ([r,g,b]) and a shared `outputThreshold`, pushed by `sendOutput()`
+from `sendAll()`.
+
+### Protocol additions
+```
+"<name>t"         value = win threshold        e.g. "y0t"  = 0.5
+"<name>cr/cg/cb"  value = flash colour 0-255   e.g. "y1cr" = 40
+STRING "<name>m<n>:<text>"  chunk n of the win message, e.g. "y1m0:frech"
+                            chunk 0 replaces, later chunks append
+```
+The message is **chunked at 14 characters** ("<name>m<n>:" is 5 of the 19-char limit) so arbitrarily
+long text works.
+
+### Bug caught while adding this
+The picture branch did `return` on **any** colon message whose head was not a picture, which would
+have silently swallowed every message chunk. Rewrote both branches to match on the head
+(`mine && head.charAt(2) == "p"` / `== "m"`) instead of returning early. Worth remembering: with
+several `"<head>:<payload>"` message types sharing one handler, an early `return` in the first
+branch eats all the others.
+
+### Display timing
+The flash and `basic.showString(winMessage)` run **after** the round completes and immediately
+before `clearRound()`. Blocking is safe there — no input is expected until the next "calc" — and
+this is the one place `showString` is still allowed. `displayDirty` is set afterwards so the board
+returns to showing its name.
+
+### Verified (2026-09-15)
+Sender chunking and the receiver's string handler transcribed and run against each other:
+"frech" (1 chunk), "nicht frech" (1), and a 25-character message (2 chunks) all reassemble exactly;
+every message is within 19 characters; y1 ignores y0's messages; a picture message does not consume
+a following message chunk. Both files brace-balanced, handler counts unchanged.
+
+## 2026-09-15 — Is displayDirty necessary? Yes, for the scrolling paths
+
+Asked whether the `displayDirty` indirection is needed. It is, but for a narrower reason than the
+old comment claimed, which is now corrected in the file.
+
+All four setters sit inside **radio handlers**. Three of them would otherwise call
+`basic.showString` (identity claimed/released, choice value arrived), which **scrolls for over a
+second**. A board stuck in that MISSES an arriving softSerial line outright — bit-banged serial has
+no buffer — which is precisely the bug that killed reception earlier. So deferring the repaint to
+the main loop is load-bearing.
+
+The fourth setter (a picture row arriving) calls `drawBits`, which is instant and would be safe
+inline; it uses the flag for consistency.
+
+The fifth use, after a win, is already in the main loop rather than a handler, so it could repaint
+directly. Deferring costs one ~20 ms iteration and keeps repaint logic in one place — convention,
+not necessity.
+
+The old comment said "so drawing never stalls the radio queue". The radio queue is the lesser
+hazard: radio buffers a few packets, softSerial buffers nothing.

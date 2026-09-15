@@ -74,6 +74,30 @@ let netWeights: number[][] = [
 ]
 
 // ============================================================
+//  2a. THE OUTPUT LAYER  --  what each y board announces when it wins
+//
+//  When an output neuron's value exceeds outputThreshold it flashes its colour
+//  and scrolls its message, the way nn.ts did ("frech" / "nicht frech").
+//  Edit the text here and it is pushed over radio -- no reflashing.
+// ============================================================
+let outputNames: string[] = ["y0", "y1"]
+
+// One message per output neuron, in the same order.
+let outputMessages: string[] = [
+    "nicht frech",     // y0 wins
+    "frech"            // y1 wins
+]
+
+// Flash colour per output neuron, as [red, green, blue], 0-255.
+let outputColors: number[][] = [
+    [0, 40, 0],        // y0: green
+    [40, 0, 0]         // y1: red
+]
+
+// A neuron announces itself only if its output exceeds this.
+let outputThreshold = 0.5
+
+// ============================================================
 //  2b. THE INPUT LAYER  --  what each x board offers to choose from
 //
 //  Each x board gets a list of selectable values and one picture per value.
@@ -99,21 +123,23 @@ let inputChoices: number[][] = [
     [0.2, 0.4, 0.6, 0.8, 1.0]        // x1
 ]
 
-// One picture per choice, in the same order. Here: bar graphs, so the height
-// of the bar shows how big the value is.
+// One picture per choice, in the same order as inputChoices. 5 rows of 5
+// characters, "1" = lit. Copied verbatim from the working input.ts, so the
+// boards show exactly the artwork they did before -- but sent over radio, so
+// changing a picture here needs no reflashing of the neuron boards.
 let inputPictures: string[][] = [
     [
-        "00000" + "00000" + "00000" + "00000" + "11111",   // x0 = 0.25
-        "00000" + "00000" + "00000" + "11111" + "11111",   // x0 = 0.50
-        "00000" + "00000" + "11111" + "11111" + "11111",   // x0 = 0.75
-        "00000" + "11111" + "11111" + "11111" + "11111"    // x0 = 1.00
+        "11011" + "11011" + "00000" + "00000" + "00000",   // x0 = 0.25
+        "00011" + "11011" + "00000" + "00000" + "00000",   // x0 = 0.50
+        "10010" + "01001" + "00000" + "00000" + "00000",   // x0 = 0.75
+        "00000" + "11011" + "00000" + "00000" + "00000"    // x0 = 1.00
     ],
     [
-        "00000" + "00000" + "00000" + "00000" + "10000",   // x1 = 0.2
-        "00000" + "00000" + "00000" + "00000" + "11000",   // x1 = 0.4
-        "00000" + "00000" + "00000" + "00000" + "11100",   // x1 = 0.6
-        "00000" + "00000" + "00000" + "00000" + "11110",   // x1 = 0.8
-        "00000" + "00000" + "00000" + "00000" + "11111"    // x1 = 1.0
+        "00000" + "00000" + "01110" + "10001" + "11111",   // x1 = 0.2
+        "00000" + "00000" + "00000" + "10001" + "01110",   // x1 = 0.4
+        "00000" + "00000" + "11110" + "10010" + "01101",   // x1 = 0.6
+        "00000" + "00000" + "11111" + "11111" + "01110",   // x1 = 0.8
+        "00000" + "00000" + "11111" + "10001" + "01110"    // x1 = 1.0
     ]
 ]
 
@@ -139,6 +165,92 @@ function sendNeuron(index: number) {
         basic.pause(60)
     }
     serial.writeLine("sent " + name + " (" + weights.length + " weights)")
+}
+
+// Pack a 25-character "0"/"1" picture into 5 characters, one per row: each row
+// is 5 bits (0..31), sent as the character at code 95 + value.
+//
+// Why: radio.sendString carries at most 19 characters, and
+// "<name>p<k>:<25 bits>" is 30 -- it arrived truncated and was silently
+// rejected, so the boards only ever showed the fallback dots. Packed, the whole
+// message is 10 characters.
+//
+// Why base 95: codes 95..126 ("_" through "~") are 32 consecutive printable
+// characters containing no ":" (the field separator), no quote and no
+// backslash, so nothing needs escaping and nothing confuses the parser.
+// Pack a MakeCode Image directly, so pictures can be authored in the editor's
+// visual grid instead of as "0"/"1" text:
+//
+//     sendPicture("x0", 0, images.createImage(`
+//         . . . . .
+//         . # . . #
+//         . # . . #
+//         . . # # #
+//         . . . . .
+//         `))
+//
+// Same wire format as packPicture -- 5 bits per character, one per row.
+function packImage(img: Image): string {
+    let out = ""
+    for (let y = 0; y <= 4; y++) {
+        let v = 0
+        for (let x = 0; x <= 4; x++) {
+            if (img.pixel(x, y)) {
+                v = v | (1 << x)
+            }
+        }
+        out = out + String.fromCharCode(95 + v)
+    }
+    return out
+}
+
+// Send one MakeCode Image as choice k's picture for board `name` ("x0"/"x1").
+// Fits a single radio message (10 characters).
+function sendPicture(name: string, k: number, img: Image) {
+    radio.sendString(name + "p" + k + ":" + packImage(img))
+}
+
+function packPicture(bits: string): string {
+    let out = ""
+    for (let y = 0; y <= 4; y++) {
+        let v = 0
+        for (let x = 0; x <= 4; x++) {
+            if (bits.charAt(y * 5 + x) == "1") {
+                v = v | (1 << x)
+            }
+        }
+        out = out + String.fromCharCode(95 + v)
+    }
+    return out
+}
+
+// Give a y board its win message, flash colour and threshold. The message is
+// sent in chunks because radio.sendString carries only 19 characters; chunk 0
+// replaces whatever was there, later chunks append.
+function sendOutput(index: number) {
+    let name = outputNames[index]
+    let msg = outputMessages[index]
+    let col = outputColors[index]
+
+    radio.sendValue(name + "t", outputThreshold)
+    basic.pause(120)
+    radio.sendValue(name + "cr", col[0])
+    basic.pause(120)
+    radio.sendValue(name + "cg", col[1])
+    basic.pause(120)
+    radio.sendValue(name + "cb", col[2])
+    basic.pause(120)
+
+    // "<name>m<n>:" is 5 characters, leaving 14 of the 19-character limit.
+    let chunk = 0
+    let pos = 0
+    while (pos < msg.length) {
+        radio.sendString(name + "m" + chunk + ":" + msg.substr(pos, 14))
+        basic.pause(150)
+        pos = pos + 14
+        chunk = chunk + 1
+    }
+    serial.writeLine("sent " + name + " message: " + msg)
 }
 
 // Give an x board its identity, its list of values and one picture per value.
@@ -167,10 +279,12 @@ function sendInput(index: number) {
         radio.sendValue(name + "v" + k, values[k])
         basic.pause(200)
     }
-    // Pictures last, once the board is already usable.
+    // Pictures last, once the board is already usable. One message each: the
+    // 25 bits are PACKED, five per character, so the whole picture fits in the
+    // 19-character limit radio.sendString imposes (see packPicture).
     for (let k = 0; k <= pics.length - 1; k++) {
-        radio.sendString(name + "p" + k + ":" + pics[k])
-        basic.pause(200)
+        radio.sendString(name + "p" + k + ":" + packPicture(pics[k]))
+        basic.pause(150)
     }
     serial.writeLine("sent " + name + " (" + values.length + " choices)")
 }
@@ -204,6 +318,9 @@ function sendAll() {
     }
     for (let i = 0; i <= inputNames.length - 1; i++) {
         sendInput(i)
+    }
+    for (let i = 0; i <= outputNames.length - 1; i++) {
+        sendOutput(i)
     }
     basic.showIcon(IconNames.Yes)
     basic.pause(400)

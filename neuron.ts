@@ -21,34 +21,27 @@
 //      "<name>i"    value = fanIn           e.g. "y0i"  = 3
 //      "<name>b"    value = bias            e.g. "h1b"  = 10.15
 //      "<name>w<j>" value = weight j        e.g. "h1w0" = -11.38
+//      "<name>t"    value = win threshold    e.g. "y0t"  = 0.5
+//      "<name>cr/cg/cb" value = flash colour  e.g. "y1cr" = 40
+//      STRING "<name>m<n>:<text>"  chunk n of the message an output
+//                                neuron shows when it wins, e.g.
+//                                "y1m0:frech". Chunk 0 replaces,
+//                                later chunks append.
 //      "calc"                               start a round
-//      "reset"                              clear inputs, keep weights
 //
 //  INPUT (x) boards use the same file. They have no weights; instead the
 //  sender gives them a list of selectable values, each with a picture:
 //      "<name>n"    value = how many choices        e.g. "x0n" = 4
 //      "<name>v<k>" value = choice k's value        e.g. "x0v0" = 0.25
-//      STRING "<name>p<k>:<25 chars>"  choice k's picture, row by row,
-//                                      e.g. "x0p0:0111010001001000100001110"
+//      STRING "<name>p<k>:<5 packed chars>"  choice k's picture, 5 bits per
+//                                        character (code 95 + row value), so
+//                                        all 25 pixels fit in sendString's
+//                                        19-character limit. e.g. "x0p0:zz___"."
 //  A is previous choice, B is next; the board shows that choice's picture and
 //  sends its value on P3 when "calc" arrives.
 // ============================================================
 
-// Status is shown on the RGB LED rather than the 5x5 matrix. Not because the
-// matrix conflicts with the pins -- on the Calliope mini P0-P3 are independent
-// of the display -- but because matrix output (showString/showImage/showNumber)
-// SCROLLS AND BLOCKS, and a blocked board misses arriving softSerial lines
-// outright. RGB colours are instant.
-
-// The sender uses the same group; without this the board is on group 0 and
-// never hears a thing.
-//
-// NOTE: this runs BEFORE the softSerial.onLine registrations further down.
-// The older working code (nn.js) never initialised the radio at all, and its
-// cables worked. Radio and bit-banged softSerial compete for timing, so if
-// reception stays dead, test with softserial-test.ts: it is softSerial only,
-// with a commented-out setGroup to toggle. If the radio proves to be the
-// conflict, the fix is to keep them apart rather than reorder these lines.
+// Without this the board sits on group 0 and never hears the sender.
 radio.setGroup(1)
 
 // ---- identity, assigned over radio -------------------------------------
@@ -59,18 +52,81 @@ let ownWeights: number[] = [0, 0, 0, 0]
 let weightsSeen: boolean[] = [false, false, false, false]
 let biasSeen = false
 let fanInSeen = false
+function hslToHex(h: number, s: number, l: number) {
+    h = h % 360
+    s = s / 100
+    l = l / 100
+    c = (1 - Math.abs(2 * l - 1)) * s
+    x = c * (1 - Math.abs(h / 60 % 2 - 1))
+    m = l - c / 2
+    let r, g, b;
+    if (h < 60) {
+        r = c
+        g = x
+        b = 0
+    } else if (h < 120) {
+        r = x
+        g = c
+        b = 0
+    } else if (h < 180) {
+        r = 0
+        g = c
+        b = x
+    } else if (h < 240) {
+        r = 0
+        g = x
+        b = c
+    } else if (h < 300) {
+        r = x
+        g = 0
+        b = c
+    } else {
+        r = c
+        g = 0
+        b = x
+    }
+    r = Math.round((r + m) * 255)
+    g = Math.round((g + m) * 255)
+    b = Math.round((b + m) * 255)
+    return (r << 16) | (g << 8) | b
+}
 
+let m = 0
+let x = 0
+let c = 0
+let l = 0
+let s = 0
+let h = 0
+
+function rainbow () {
+    for (let j = 0; j <= 330; j++) {
+        basic.setLedColors(hslToHex(j % 360, 100, 30), hslToHex((j + 30) % 360, 100, 30), hslToHex((j + 60) % 360, 100, 30))
+        basic.pause(4)
+    }
+
+    basic.turnRgbLedOff()
+}
 // ---- input (x) boards only ---------------------------------------------
 // An x board has no weights. It holds a list of selectable values, each with a
 // picture, and sends the selected one when a round starts.
 let choiceValues: number[] = []
 let choiceValuesSeen: boolean[] = []
-// Set by the radio handlers, acted on by the main loop. Drawing must NEVER
-// happen inside a radio handler: basic.showNumber/showString scroll and block
-// for hundreds of ms, during which arriving packets overflow the radio queue
-// and are dropped -- that is what made one choice never arrive.
+// Pictures arrive from the sender as 25-character "0"/"1" strings, one per
+// choice. Kept as text and drawn pixel by pixel -- see drawBits().
+let choicePics: string[] = []
+
+// ---- output (y) boards only --------------------------------------------
+// The message shown when this neuron wins, its flash colour, and the level its
+// output must exceed to count as a win. All three come from the sender.
+let winMessage = ""
+let winRed = 0
+let winGreen = 0
+let winBlue = 0
+let outputThreshold = 0.5
+// Set by the radio handlers, repainted by the main loop. Drawing must NEVER
+// happen inside a handler: it blocks for hundreds of ms, and arriving radio
+// packets and softSerial lines are lost outright while it does.
 let displayDirty = false
-let choiceImages: Image[] = []
 let choiceCount = 0
 let choiceIndex = 0
 
@@ -100,6 +156,7 @@ function sigmoid(num: number): number {
 }
 
 function getNeuronOutput(): number {
+    rainbow()
     let result = 0
     for (let i = 0; i <= fanIn - 1; i++) {
         result = result + inputs[i] * ownWeights[i]
@@ -112,52 +169,55 @@ function isInputBoard(): boolean {
     return ownName.charAt(0) == "x"
 }
 
-// All status goes through the RGB LED: the 5x5 matrix is disabled because it
-// would steal the softSerial pins. Colours are instant and never block.
-function setRgb(r: number, g: number, b: number) {
-    basic.setLedColors((r << 16) | (g << 8) | b, 0, 0)
-}
-function rgbOff() {
-    basic.turnRgbLedOff()
-}
-// Brief flash without blocking long enough to lose a serial line.
-function flash(r: number, g: number, b: number) {
-    setRgb(r, g, b)
-    basic.pause(60)
-    rgbOff()
+// CAUTION: basic.showString / showNumber SCROLL and block long enough to lose
+// an arriving softSerial line. Only showLeds / showIcon / clearScreen, which
+// are instant, may be used in the hot paths.
+
+// Draw a 25-character "0"/"1" bitmap, row by row. led.plot/unplot are instant;
+// basic.showImage would block long enough to lose an arriving softSerial line.
+function drawBits(bits: string) {
+    for (let y = 0; y <= 4; y++) {
+        for (let x = 0; x <= 4; x++) {
+            if (bits.charAt(y * 5 + x) == "1") {
+                led.plot(x, y)
+            } else {
+                led.unplot(x, y)
+            }
+        }
+    }
 }
 
 function hasChoice(k: number): boolean {
     return k >= 0 && k < choiceValuesSeen.length && choiceValuesSeen[k]
 }
 
-// Draw the picture for the currently selected choice, the number if no picture
-// arrived, or "!" if the value itself never arrived (a dropped radio message).
-// Draw the current state. NON-BLOCKING on purpose -- showImage(0) and
-// plotting are instant, whereas showNumber/showString scroll for a long time
-// and would stall the radio. Called only from the main loop, never a handler.
-// NOTE: the per-choice PICTURES cannot be shown while the matrix is disabled.
-// They are still received and stored (choiceImages), so if the display is ever
-// re-enabled -- e.g. on a board that does no softSerial reading -- showImage
-// can come back. For now the selected choice is shown as an RGB colour:
-// blue -> green -> yellow -> red across the list.
+// Show the board's state on the 5x5 matrix.
+//
+// Pictures come from the sender over radio (see sender.ts inputPictures), so a
+// board stores no artwork of its own and the set can be changed without
+// reflashing. drawBits is instant; nothing here scrolls.
 function showChoice() {
     if (ownName == "") {
-        setRgb(40, 0, 40)                  // purple: unclaimed
+        basic.showString("?")              // no identity yet
         return
     }
     if (!hasChoice(choiceIndex)) {
-        setRgb(60, 0, 0)                   // red: this choice never arrived
+        basic.showIcon(IconNames.No, 0)    // this choice never arrived
         return
     }
-    if (choiceCount <= 1) {
-        setRgb(0, 0, 60)
+    if (choiceIndex < choicePics.length && choicePics[choiceIndex] != null) {
+        drawBits(choicePics[choiceIndex])
         return
     }
-    // Spread the selection across blue -> red so each choice looks distinct.
-    let t = Math.idiv(choiceIndex * 255, choiceCount - 1)
-    setRgb(t, 60 - Math.idiv(t, 4), 60 - t)
+    // Value known but its picture has not arrived yet: show the index as a
+    // row of dots so the board is still usable.
+    basic.clearScreen()
+    for (let i = 0; i <= choiceIndex && i <= 4; i++) {
+        led.plot(i, 2)
+    }
 }
+
+
 
 // Report the selection to serial, saying plainly when a value is missing
 // instead of printing "undefined".
@@ -170,24 +230,6 @@ function reportChoice() {
     }
 }
 
-// Turn a 25-character "0"/"1" string into an Image, row by row.
-function imageFromText(bits: string): Image {
-    let img = images.createImage(`
-        . . . . .
-        . . . . .
-        . . . . .
-        . . . . .
-        . . . . .
-        `)
-    for (let y = 0; y <= 4; y++) {
-        for (let x = 0; x <= 4; x++) {
-            if (bits.charAt(y * 5 + x) == "1") {
-                img.setPixel(x, y, true)
-            }
-        }
-    }
-    return img
-}
 
 // ============================================================
 //  Readiness
@@ -252,11 +294,6 @@ radio.onReceivedValue(function (name, value) {
         armed = true
         return
     }
-    if (name == "reset") {
-        clearRound()
-        return
-    }
-
     // Everything else is "<neuronName><field>", e.g. "h1w0", "y0b", "y0i".
     // Names are 2 chars, so the field starts at index 2.
     if (name.length < 3) {
@@ -283,12 +320,29 @@ radio.onReceivedValue(function (name, value) {
         choiceIndex = 0
         choiceValues = []
         choiceValuesSeen = []
-        choiceImages = []
+        choicePics = []
         return
     }
     if (field == "b") {
         bias = value
         biasSeen = true
+        return
+    }
+    if (field == "t") {
+        // y board: output must exceed this to count as a win
+        outputThreshold = value
+        return
+    }
+    if (field == "cr") {
+        winRed = value
+        return
+    }
+    if (field == "cg") {
+        winGreen = value
+        return
+    }
+    if (field == "cb") {
+        winBlue = value
         return
     }
     if (field.charAt(0) == "v") {
@@ -314,36 +368,69 @@ radio.onReceivedValue(function (name, value) {
     }
 })
 
-// ONE handler for every radio string. There must only ever be one:
-// registering radio.onReceivedString twice REPLACES the first registration,
-// so a second handler silently kills identity assignment.
+// ONE handler for every radio string -- there must only ever be one:
+// registering radio.onReceivedString twice REPLACES the first, which silently
+// killed identity assignment once already.
 //
-// Two message shapes arrive here:
-//   "<serial>=<name>"              identity, e.g. "-2022602061=x0"
-//   "<name>p<k>:<25 chars>"        an x board's picture for choice k
-// Both travel as text because neither a serial number nor a 25-pixel mask
-// survives radio.sendValue()'s 32-bit float (exact only to 2^24).
+// Two shapes arrive here, both as TEXT because neither survives
+// radio.sendValue()'s 32-bit float (exact only to 2^24):
+//   "<serial>=<name>"         identity,  e.g. "-2022602061=x0"
+//   "<name>p<k>:<25 chars>"   picture for choice k of an x board
 radio.onReceivedString(function (receivedString) {
+    // ---- picture: "<name>p<k>:<5 packed chars>" ----
+    // The 25 pixels arrive PACKED, one character per row (5 bits each, code
+    // 95 + value), because radio.sendString only carries 19 characters and the
+    // unpacked form needed 30. See packPicture() in sender.ts.
+    // Both the picture and the win message are "<head>:<payload>", so match on
+    // the head rather than returning early -- an earlier version returned on
+    // ANY colon message whose head was not a picture, which silently swallowed
+    // the message chunks.
     let colon = receivedString.indexOf(":")
+    let head = colon >= 0 ? receivedString.substr(0, colon) : ""
+    let payload = colon >= 0
+        ? receivedString.substr(colon + 1, receivedString.length - colon - 1)
+        : ""
+    let mine = head.length >= 3 && head.substr(0, 2) == ownName
 
-    // ---- picture: "<name>p<k>:<bits>" ----
-    if (colon >= 0) {
-        let head = receivedString.substr(0, colon)
-        let bits = receivedString.substr(colon + 1, receivedString.length - colon - 1)
-        if (head.length < 4 || bits.length < 25) {
-            return
-        }
-        if (head.substr(0, 2) != ownName || head.charAt(2) != "p") {
-            return
-        }
+    if (mine && head.charAt(2) == "p" && payload.length >= 5) {
+        let packed = payload
         let k = parseInt(head.substr(3, head.length - 3))
-        while (choiceImages.length <= k) {
-            choiceImages.push(null)
+        let bits = ""
+        for (let y = 0; y <= 4; y++) {
+            let v = packed.charCodeAt(y) - 95
+            for (let x = 0; x <= 4; x++) {
+                if (v & (1 << x)) {
+                    bits = bits + "1"
+                } else {
+                    bits = bits + "0"
+                }
+            }
         }
-        choiceImages[k] = imageFromText(bits)
+        while (choicePics.length <= k) {
+            choicePics.push(null)
+        }
+        choicePics[k] = bits
         if (k == choiceIndex) {
             displayDirty = true
         }
+        return
+    }
+
+    // ---- win message chunk: "<name>m<n>:<text>" ----
+    // Chunked because radio.sendString carries only 19 characters. Chunk 0
+    // starts a fresh message, later chunks append, so any length works.
+    if (mine && head.charAt(2) == "m") {
+        let n = parseInt(head.substr(3, head.length - 3))
+        if (n == 0) {
+            winMessage = payload
+        } else {
+            winMessage = winMessage + payload
+        }
+        return
+    }
+
+    // Any other colon message is not for us.
+    if (colon >= 0) {
         return
     }
 
@@ -387,21 +474,18 @@ softSerial.onLine(DigitalPin.P1, softSerial.BaudRate.Baud1200, function (line) {
     serial.writeLine("RX P1 raw: [" + line + "]")
     inputs[1] = parseFloat(line)
     received[1] = true
-    flash(0, 60, 0)                     // green flash = a value arrived
 })
 softSerial.onLine(DigitalPin.P2, softSerial.BaudRate.Baud1200, function (line) {
     basic.pause(10)
     serial.writeLine("RX P2 raw: [" + line + "]")
     inputs[2] = parseFloat(line)
     received[2] = true
-    flash(0, 60, 0)
 })
 softSerial.onLine(DigitalPin.P0, softSerial.BaudRate.Baud1200, function (line) {
     basic.pause(10)
     serial.writeLine("RX P0 raw: [" + line + "]")
     inputs[0] = parseFloat(line)
     received[0] = true
-    flash(0, 60, 0)
 })
 
 // ============================================================
@@ -409,18 +493,19 @@ softSerial.onLine(DigitalPin.P0, softSerial.BaudRate.Baud1200, function (line) {
 // ============================================================
 basic.forever(function () {
     basic.pause(20)
-    // Repaint here, outside the radio handlers, so drawing never stalls the
-    // radio queue.
+    // Repaint here rather than in the radio handlers that set displayDirty.
+    // basic.showString scrolls for over a second, and a board stuck in it MISSES
+    // an arriving softSerial line outright -- bit-banged serial has no buffer.
+    // Doing it here keeps handlers instant, and a repaint only ever happens on a
+    // state change, never mid-round.
     if (displayDirty) {
         displayDirty = false
         if (isInputBoard()) {
             showChoice()
         } else if (ownName == "") {
-            setRgb(40, 0, 40)              // purple = unclaimed
-        } else if (ownName.charAt(0) == "y") {
-            setRgb(0, 0, 50)               // blue = output neuron, claimed
+            basic.showString("?")
         } else {
-            setRgb(0, 50, 20)              // teal = hidden neuron, claimed
+            basic.showString(ownName)
         }
     }
     if (!armed || !isConfigured()) {
@@ -440,7 +525,10 @@ basic.forever(function () {
         basic.pause(50)
         output = choiceValues[choiceIndex]
         serial.writeLine("TX P3: " + output + " (from " + ownName + ")")
-        softSerial.writeNumber(DigitalPin.P3, softSerial.BaudRate.Baud1200, output)
+        basic.showIcon(IconNames.ArrowEast)
+        softSerial.writeLine(DigitalPin.P3, softSerial.BaudRate.Baud1200, convertToText(output))
+        basic.pause(1000)
+        showChoice()
         armed = false
         return
     }
@@ -449,12 +537,33 @@ basic.forever(function () {
     }
     output = getNeuronOutput()
     serial.writeValue("out_" + ownName, output)
-    setRgb(0, 0, 60)                    // blue = transmitting
-    softSerial.writeNumber(DigitalPin.P3, softSerial.BaudRate.Baud1200, output)
-    rgbOff()
+    basic.showNumber(output, 80)
+    // writeLine, NOT writeNumber: softSerial.onLine fires on a NEWLINE, and
+    // writeNumber does not append one, so the receiver's handler never runs.
+    // This is what the working nn.ts does and it is why nothing was received.
+    softSerial.writeLine(DigitalPin.P3, softSerial.BaudRate.Baud1200, convertToText(output))
+    basic.pause(500)
+    basic.clearScreen()
     // Output neurons also report back, so the sender can pick the winner.
     if (ownName.charAt(0) == "y") {
         radio.sendValue(ownName + "o", output)
+        // Announce a win locally, the way nn.ts did: flash this neuron's own
+        // colour, then scroll its message. Colour, message and threshold all
+        // come from the sender, so they change without reflashing.
+        // Blocking is safe here: the round is over and no input is expected
+        // until the next "calc".
+        if (output > outputThreshold) {
+            for (let index = 0; index < 5; index++) {
+                basic.setLedColor(basic.rgb(winRed, winGreen, winBlue))
+                basic.pause(100)
+                basic.turnRgbLedOff()
+                basic.pause(100)
+            }
+            if (winMessage != "") {
+                basic.showString(winMessage)
+            }
+            displayDirty = true      // go back to showing the board's name
+        }
     }
     clearRound()
 })
@@ -474,10 +583,8 @@ input.onButtonEvent(Button.A, input.buttonEventClick(), function () {
     // tested on its own: press A here, watch the downstream board's serial for
     // "RX P<n> raw: [0.5]". No radio, no calc, no weights involved.
     serial.writeLine("TX P3 test: 0.5 (from " + ownName + ")")
-    setRgb(0, 0, 60)                    // blue = transmitting
-    softSerial.writeNumber(DigitalPin.P3, softSerial.BaudRate.Baud1200, 0.5)
+    softSerial.writeLine(DigitalPin.P3, softSerial.BaudRate.Baud1200, convertToText(0.5))
     basic.pause(200)
-    rgbOff()
 })
 
 input.onButtonEvent(Button.B, input.buttonEventClick(), function () {
@@ -507,6 +614,5 @@ input.onButtonEvent(Button.B, input.buttonEventClick(), function () {
     }
 })
 
-// Show that we are up but not yet claimed. RGB only -- the matrix is disabled
-// so that softSerial can use P0/P1/P2.
-setRgb(40, 0, 40)
+// Show that we are up but not yet claimed.
+basic.showString("?")

@@ -38,7 +38,7 @@ softSerial.onLine(DigitalPin.P0, softSerial.BaudRate.Baud1200, function (line) {
 input.onButtonEvent(Button.A, input.buttonEventClick(), function () {
     serial.writeLine("TX P3: 0.5")
     led.plot(4, 0)
-    softSerial.writeNumber(DigitalPin.P3, softSerial.BaudRate.Baud1200, 0.5)
+    softSerial.writeLine(DigitalPin.P3, softSerial.BaudRate.Baud1200, convertToText(0.5))
     basic.pause(200)
     led.unplot(4, 0)
 })
