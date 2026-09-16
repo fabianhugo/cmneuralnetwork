@@ -1953,8 +1953,11 @@ async function usbSendNetwork(){
     for (let i = 0; i < rows.length; i++){
       const bias = rows[i][0];
       const w = rows[i].slice(1);
-      await usbSendRetry('NEURON ' + i + ' ' + bias.toFixed(6) + ' ' +
-                    w.map(v => v.toFixed(6)).join(','));
+      // 4 decimals, not 6: the board's serial RX buffer is small, and a
+      // shorter line is less likely to overflow it. The weights reach +-16, so
+      // 4 decimals still resolve far finer than the boards can act on.
+      await usbSendRetry('NEURON ' + i + ' ' + bias.toFixed(4) + ' ' +
+                    w.map(v => v.toFixed(4)).join(','));
     }
 
     // The answer neurons announce themselves with a name and a colour.

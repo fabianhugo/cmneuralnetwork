@@ -21,6 +21,15 @@
 
 radio.setGroup(1)
 
+// !! The serial RX buffer defaults to 32 BYTES. USB command lines from the page
+// run to ~56 characters ("NEURON 3 -4.758934 -9.282315,9.533732,9.517074"), so
+// long ones overflowed and serial.readLine() returned a CHOPPED line: every
+// board serial arrived cut to 9 characters and no board recognised itself.
+// Pressing A on the sender always worked because that path never touches USB.
+// 254 is the most a uint8_t size argument allows.
+serial.setRxBufferSize(254)
+serial.setTxBufferSize(254)
+
 // ============================================================
 //  1. WHICH BOARD IS WHICH NEURON
 //
@@ -205,9 +214,8 @@ function sendIdentity(name: string) {
     let sn = serialOf(name)
     let msg = sn + "=" + name
     // Print exactly what goes on the air, so it can be compared with the
-    // "id? want [...] mine [...]" line each board logs. A board staying "?"
-    // is either not hearing this, or hearing a serial that is not its own.
-    serial.writeLine("id-> [" + msg + "]" +
+    // "id? want [...] mine [...]" line each board logs.
+    serial.writeLine("id-> [" + msg + "] (from " + sn + ")" +
         (sn == "0" ? "   <-- NO SERIAL SET for " + name : ""))
     for (let attempt = 0; attempt <= 2; attempt++) {
         radio.sendString(msg)
@@ -275,6 +283,16 @@ function packImage(img: Image): string {
 
 // Send one MakeCode Image as choice k's picture for board `name` ("x0"/"x1").
 // Fits a single radio message (10 characters).
+//
+// NOT called from sendAll -- it is here to be called by hand when you want to
+// push one picture drawn in the MakeCode editor, e.g.
+//     sendPicture("x0", 0, images.createImage(`
+//         . # . # .
+//         . . . . .
+//         # . . . #
+//         . # # # .
+//         . . . . .
+//         `))
 function sendPicture(name: string, k: number, img: Image) {
     radio.sendString(name + "p" + k + ":" + packImage(img))
 }
@@ -312,8 +330,8 @@ function sendOutput(index: number) {
 
     // "<name>m<n>:" is 5 characters while the chunk index is one digit, leaving
     // 14 of the 19-character radio limit. At chunk 10 the header grows to 6, so
-    // 13 is used throughout -- a message past 130 characters would otherwise
-    // emit a 20-character message that the radio silently truncates.
+    // 13 is used from there on -- a long message would otherwise emit a
+    // 20-character string that the radio silently truncates.
     let chunk = 0
     let pos = 0
     while (pos < msg.length) {

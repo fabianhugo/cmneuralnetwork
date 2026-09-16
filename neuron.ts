@@ -15,9 +15,9 @@
 //
 //  Radio protocol (see sender.ts):
 //      STRING "<serial>=<name>"  claims THIS board if the serial matches,
-//                                e.g. "139422584=h0". Sent as a STRING because
-//                                radio.sendValue()'s number is a 32-bit float,
-//                                which cannot hold a 9-10 digit serial exactly.
+//                                e.g. "-1394225184=h0". A STRING because
+//                                radio.sendValue()'s number is a 32-bit float
+//                                and cannot hold a 9-10 digit serial.
 //      "<name>i"    value = fanIn           e.g. "y0i"  = 3
 //      "<name>b"    value = bias            e.g. "h1b"  = 10.15
 //      "<name>w<j>" value = weight j        e.g. "h1w0" = -11.38
@@ -38,8 +38,8 @@
 //                   (0 = send the raw value)
 //      STRING "<name>p<k>:<5 packed chars>"  choice k's picture, 5 bits per
 //                                        character (code 95 + row value), so
-//                                        all 25 pixels fit in sendString's
-//                                        19-character limit. e.g. "x0p0:zz___"."
+//                                        all 25 pixels fit sendString's
+//                                        19-character limit. e.g. "x0p0:zz___".
 //  A is previous choice, B is next; the board shows that choice's picture and
 //  sends its value on P3 when "calc" arrives.
 //
@@ -434,24 +434,51 @@ radio.onReceivedString(function (receivedString) {
         : ""
     let mine = head.length >= 3 && head.substr(0, 2) == ownName
 
-    if (mine && head.charAt(2) == "p" && payload.length >= 5) {
-        let packed = payload
-        let k = parseInt(head.substr(3, head.length - 3))
-        let bits = ""
-        for (let y = 0; y <= 4; y++) {
-            let v = packed.charCodeAt(y) - 95
-            for (let x = 0; x <= 4; x++) {
-                if (v & (1 << x)) {
-                    bits = bits + "1"
-                } else {
-                    bits = bits + "0"
-                }
+    if (mine && head.charAt(2) == "p") {
+        // Two shapes are accepted, so a board and a sender flashed at different
+        // times cannot end up talking past each other:
+        //   "<name>p<k>:<5 packed>"      a whole picture
+        //   "<name>p<k>r<y>:<1 packed>"  a single row
+        // Each packed character is 5 bits at code 95 + value.
+        let rPos = head.indexOf("r")
+        let k = 0
+        let firstRow = 0
+        let rows = 5
+        if (rPos >= 3) {
+            k = parseInt(head.substr(3, rPos - 3))
+            firstRow = parseInt(head.substr(rPos + 1, head.length - rPos - 1))
+            rows = 1
+            if (firstRow < 0 || firstRow > 4) {
+                return
             }
+        } else {
+            k = parseInt(head.substr(3, head.length - 3))
+        }
+        if (payload.length < rows) {
+            return
         }
         while (choicePics.length <= k) {
-            choicePics.push(null)
+            choicePics.push("0000000000000000000000000")
         }
-        choicePics[k] = bits
+        if (choicePics[k] == null) {
+            choicePics[k] = "0000000000000000000000000"
+        }
+        for (let n = 0; n <= rows - 1; n++) {
+            let y = firstRow + n
+            let v = payload.charCodeAt(n) - 95
+            let row = ""
+            for (let x = 0; x <= 4; x++) {
+                if (v & (1 << x)) {
+                    row = row + "1"
+                } else {
+                    row = row + "0"
+                }
+            }
+            choicePics[k] = choicePics[k].substr(0, y * 5) + row +
+                choicePics[k].substr(y * 5 + 5, 25 - y * 5 - 5)
+        }
+        serial.writeLine("pic " + ownName + " " + k + " rows " + firstRow +
+            "+" + rows + " <- [" + payload + "]")
         if (k == choiceIndex) {
             displayDirty = true
         }
@@ -484,9 +511,6 @@ radio.onReceivedString(function (receivedString) {
     let wantSerial = receivedString.substr(0, eq)
     let wantName = receivedString.substr(eq + 1, receivedString.length - eq - 1)
     let mySerial = convertToText(control.deviceSerialNumber())
-    // Log every identity offer this board hears, with both strings and their
-    // lengths. A near-miss (a lost leading character, a stray space, a digit
-    // dropped on the wire) is invisible otherwise -- the board just stays "?".
     serial.writeLine("id? want [" + wantSerial + "](" + wantSerial.length +
         ") mine [" + mySerial + "](" + mySerial.length + ") -> " +
         (wantSerial == mySerial ? "MATCH " + wantName : "no"))
@@ -514,10 +538,6 @@ radio.onReceivedString(function (receivedString) {
 //
 // Registration order also matches nn.js (P1, P2, then P0), which is the order
 // that was observed working.
-// Visual feedback: a received value lights a pixel in the middle row --
-// column 0 for P0, 1 for P1, 2 for P2 -- so you can see arrivals without a
-// serial monitor attached. led.plot is instant; nothing here may scroll.
-// The dots stay lit until the board fires (clearRound wipes them).
 softSerial.onLine(DigitalPin.P1, softSerial.BaudRate.Baud1200, function (line) {
     basic.pause(10)
     serial.writeLine("RX P1 raw: [" + line + "]")
@@ -666,7 +686,8 @@ input.onButtonEvent(Button.B, input.buttonEventClick(), function () {
         return
     }
     serial.writeLine("--- " + (ownName == "" ? "UNCLAIMED" : ownName) + " ---")
-    // Paste this line straight into boardSerials[] in sender.ts, quotes and all.
+    // Paste this line into the board table on the web page (or allSerials[] in
+    // sender.ts), quotes and all.
     // The serial is a SIGNED 32-bit int, so it can be negative -- keep the minus.
     serial.writeLine("    \"" + convertToText(control.deviceSerialNumber()) + "\",")
     basic.pause(50)
