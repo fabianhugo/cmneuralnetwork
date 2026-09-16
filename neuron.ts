@@ -33,12 +33,22 @@
 //  sender gives them a list of selectable values, each with a picture:
 //      "<name>n"    value = how many choices        e.g. "x0n" = 4
 //      "<name>v<k>" value = choice k's value        e.g. "x0v0" = 0.25
+//      "<name>m"    value = mean for scaling        e.g. "x0m" = 0.625
+//      "<name>s"    value = spread for scaling      e.g. "x0s" = 0.2795
+//                   (0 = send the raw value)
 //      STRING "<name>p<k>:<5 packed chars>"  choice k's picture, 5 bits per
 //                                        character (code 95 + row value), so
 //                                        all 25 pixels fit in sendString's
 //                                        19-character limit. e.g. "x0p0:zz___"."
 //  A is previous choice, B is next; the board shows that choice's picture and
 //  sends its value on P3 when "calc" arrives.
+//
+//  Buttons on every board:
+//      A    x board: previous choice.  Others: send a 0.5 test value on P3.
+//      B    x board: next choice.      Others: dump state, then show the last
+//                                      output again as a bar.
+//      A+B  start a round for the WHOLE network (same as the sender's B),
+//           so it runs without the sender being connected.
 // ============================================================
 
 // Without this the board sits on group 0 and never hears the sender.
@@ -115,6 +125,14 @@ let choiceValuesSeen: boolean[] = []
 // choice. Kept as text and drawn pixel by pixel -- see drawBits().
 let choicePics: string[] = []
 
+// How this x board scales its chosen value before putting it on the wire:
+// sent = (chosen - myMean) / myStd. myStd of 0 means "send the raw value",
+// which is what the sender transmits when the page has scaling switched off.
+// Doing it here, rather than folding it into the first layer's weights, keeps
+// the maths visible on the boards.
+let myMean = 0
+let myStd = 0
+
 // ---- output (y) boards only --------------------------------------------
 // The message shown when this neuron wins, its flash colour, and the level its
 // output must exceed to count as a win. All three come from the sender.
@@ -137,6 +155,11 @@ let inputs: number[] = [0, 0, 0, 0]
 let received: boolean[] = [false, false, false, false]
 let armed = false         // true between a "calc" request and this neuron firing
 let output = 0
+// The last value this neuron produced, kept so button B can show it again after
+// the screen has been cleared. hasOutput stays false until the first round, so
+// an empty bar is never mistaken for a real 0.
+let lastOutput = 0
+let hasOutput = false
 
 // ============================================================
 //  Maths
@@ -184,6 +207,17 @@ function drawBits(bits: string) {
                 led.unplot(x, y)
             }
         }
+    }
+}
+
+// Put the screen back to whatever this board normally shows.
+function showState() {
+    if (isInputBoard()) {
+        showChoice()
+    } else if (ownName == "") {
+        basic.showString("?")
+    } else {
+        basic.showString(ownName)
     }
 }
 
@@ -311,6 +345,14 @@ radio.onReceivedValue(function (name, value) {
     if (field == "i") {
         fanIn = value
         fanInSeen = true
+        return
+    }
+    if (field == "m") {
+        myMean = value
+        return
+    }
+    if (field == "s") {
+        myStd = value
         return
     }
     if (field == "n") {
@@ -441,7 +483,14 @@ radio.onReceivedString(function (receivedString) {
     }
     let wantSerial = receivedString.substr(0, eq)
     let wantName = receivedString.substr(eq + 1, receivedString.length - eq - 1)
-    if (wantSerial == convertToText(control.deviceSerialNumber())) {
+    let mySerial = convertToText(control.deviceSerialNumber())
+    // Log every identity offer this board hears, with both strings and their
+    // lengths. A near-miss (a lost leading character, a stray space, a digit
+    // dropped on the wire) is invisible otherwise -- the board just stays "?".
+    serial.writeLine("id? want [" + wantSerial + "](" + wantSerial.length +
+        ") mine [" + mySerial + "](" + mySerial.length + ") -> " +
+        (wantSerial == mySerial ? "MATCH " + wantName : "no"))
+    if (wantSerial == mySerial) {
         ownName = wantName
         displayDirty = true
     } else if (ownName == wantName) {
@@ -500,13 +549,7 @@ basic.forever(function () {
     // state change, never mid-round.
     if (displayDirty) {
         displayDirty = false
-        if (isInputBoard()) {
-            showChoice()
-        } else if (ownName == "") {
-            basic.showString("?")
-        } else {
-            basic.showString(ownName)
-        }
+        showState()
     }
     if (!armed || !isConfigured()) {
         return
@@ -523,7 +566,15 @@ basic.forever(function () {
         // Receivers no longer clear on "calc", so this no longer has to win a
         // race -- a short settle is enough to let every board arm itself.
         basic.pause(50)
+        // Scale before sending, when the sender has given this board a mean and
+        // spread. The network was trained on scaled values, so the scaling has
+        // to happen somewhere; doing it here keeps it visible on the board
+        // instead of hidden inside the first layer's weights.
         output = choiceValues[choiceIndex]
+        if (myStd != 0) {
+            output = (output - myMean) / myStd
+            serial.writeLine("chose " + choiceValues[choiceIndex] + " -> scaled " + output)
+        }
         serial.writeLine("TX P3: " + output + " (from " + ownName + ")")
         basic.showIcon(IconNames.ArrowEast)
         softSerial.writeLine(DigitalPin.P3, softSerial.BaudRate.Baud1200, convertToText(output))
@@ -536,8 +587,14 @@ basic.forever(function () {
         return
     }
     output = getNeuronOutput()
+    lastOutput = output
+    hasOutput = true
     serial.writeValue("out_" + ownName, output)
-    basic.showNumber(output, 80)
+    // A bar, not a scrolling number: instant instead of ~a second of blocking,
+    // and the height reads at a glance. The 1 is the top of the scale -- with 0
+    // MakeCode auto-scales to the largest value it has seen, which would make
+    // the bar mean something different from one round to the next.
+    led.plotBarGraph(output, 1)
     // writeLine, NOT writeNumber: softSerial.onLine fires on a NEWLINE, and
     // writeNumber does not append one, so the receiver's handler never runs.
     // This is what the working nn.ts does and it is why nothing was received.
@@ -587,6 +644,19 @@ input.onButtonEvent(Button.A, input.buttonEventClick(), function () {
     basic.pause(200)
 })
 
+// A+B: start a round for the WHOLE network from any board, exactly as the
+// sender's B button does. The x boards then send their values, those reach the
+// hidden layer over the cables, and the wave runs through to the answers -- so
+// a round can be triggered without the sender being plugged in.
+//
+// This board arms itself too: "calc" is a broadcast, and a board does not hear
+// its own radio messages.
+input.onButtonEvent(Button.AB, input.buttonEventClick(), function () {
+    serial.writeLine((ownName == "" ? "?" : ownName) + ": calc for everyone")
+    radio.sendValue("calc", 0)
+    armed = true
+})
+
 input.onButtonEvent(Button.B, input.buttonEventClick(), function () {
     // On an x board B steps to the next choice; elsewhere it dumps state.
     if (isInputBoard() && choiceCount > 0) {
@@ -611,6 +681,15 @@ input.onButtonEvent(Button.B, input.buttonEventClick(), function () {
     for (let i = 0; i <= 3; i++) {
         serial.writeLine("in" + i + ": " + inputs[i] + "  received: " + received[i])
         basic.pause(30)
+    }
+    // Show the last result again as a bar -- after a round the screen has been
+    // cleared, so this is the only way to see what this neuron decided.
+    if (hasOutput) {
+        serial.writeValue("last_" + ownName, lastOutput)
+        led.plotBarGraph(lastOutput, 1)
+    } else {
+        serial.writeLine(ownName + ": has not calculated anything yet")
+        showState()
     }
 })
 

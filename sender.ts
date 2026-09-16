@@ -13,6 +13,10 @@
 //    A   push identity + all parameters to every neuron
 //    B   request one calculation round ("calc")
 //    A+B print the whole table to serial
+//
+//  It is also a UART -> RADIO BRIDGE. Connect this board to a browser over
+//  WebUSB (kids.html) and the page can load a freshly trained network into the
+//  neurons without anyone editing this file. See section 6.
 // ============================================================
 
 radio.setGroup(1)
@@ -32,13 +36,53 @@ radio.setGroup(1)
 //  NOTE: the serial is a SIGNED 32-bit int and can be NEGATIVE -- h0 reports
 //  -1394225184. Keep the minus sign and every digit exactly as the board prints
 //  it. Press B on a board and it prints a ready-to-paste quoted line.
-let boardSerials: string[] = [
+// ONE table for every board -- inputs, hidden neurons and answers alike. The
+// two entries line up by position: serialOf("h1") is the serial whose
+// allNames[i] is "h1". Looking a serial up BY NAME means nothing depends on a
+// second table staying in the same order as this one.
+let allNames: string[] = [
+    "x0",
+    "x1",
+    "h0",
+    "h1",
+    "h2",
+    "y0",
+    "y1"
+]
+let allSerials: string[] = [
+    "-2022602061",   // -> x0
+    "984150378",     // -> x1
     "-1394225184",   // -> h0   confirmed from the board's own dump
-    "-1280350870",    // -> h1   <-- UNCONFIRMED, re-read with button B
+    "-1280350870",   // -> h1   <-- UNCONFIRMED, re-read with button B
     "850974008",     // -> h2   <-- UNCONFIRMED, re-read with button B
     "1240653277",    // -> y0   <-- UNCONFIRMED, re-read with button B
     "1843421070"     // -> y1   <-- UNCONFIRMED, re-read with button B
 ]
+
+// The serial for a board name, or "0" when the page has not set one yet.
+function serialOf(name: string): string {
+    for (let i = 0; i <= allNames.length - 1; i++) {
+        if (allNames[i] == name) {
+            return allSerials[i]
+        }
+    }
+    return "0"
+}
+
+// Remember which physical board plays `name`, adding it if it is new.
+function setSerial(name: string, sn: string) {
+    for (let i = 0; i <= allNames.length - 1; i++) {
+        if (allNames[i] == name) {
+            allSerials[i] = sn
+            return
+        }
+    }
+    allNames.push(name)
+    allSerials.push(sn)
+}
+
+// The neuron boards, in the order their weights arrive: hidden layers first,
+// then the answers. Rebuilt by the ARCH command.
 let boardNames: string[] = [
     "h0",
     "h1",
@@ -98,6 +142,19 @@ let outputColors: number[][] = [
 let outputThreshold = 0.5
 
 // ============================================================
+//  2c. INPUT SCALING
+//
+//  When the training page standardizes its inputs, the network only works on
+//  standardized values. Rather than hide that inside the weights, each x board
+//  is told its own mean and spread and does the scaling itself, right before it
+//  puts the value on the wire: sent = (chosen - mean) / std.
+//  normOn = false means the boards send the raw value.
+// ============================================================
+let normOn = false
+let normMean: number[] = []
+let normStd: number[] = []
+
+// ============================================================
 //  2b. THE INPUT LAYER  --  what each x board offers to choose from
 //
 //  Each x board gets a list of selectable values and one picture per value.
@@ -109,13 +166,6 @@ let outputThreshold = 0.5
 //  own. Keep each row exactly 5 characters long.
 // ============================================================
 let inputNames: string[] = ["x0", "x1"]
-
-// The serial numbers of the two input boards (same rules as above: exact text,
-// keep any minus sign). Press B on each x board to read it.
-let inputSerials: string[] = [
-    "-2022602061",   // -> x0
-    "984150378"      // -> x1
-]
 
 // One row per x board: the values that board can send.
 let inputChoices: number[][] = [
@@ -148,14 +198,33 @@ let inputPictures: string[][] = [
 // ============================================================
 // Radio messages are small and unacknowledged, so pace them and send the
 // identity first -- a neuron ignores weights until it knows its own name.
+// Tell a board who it is. Repeated because radio is unacknowledged and this is
+// the one message a board cannot do without: miss it and the board ignores
+// everything else that follows, staying on "?" for the whole round.
+function sendIdentity(name: string) {
+    let sn = serialOf(name)
+    let msg = sn + "=" + name
+    // Print exactly what goes on the air, so it can be compared with the
+    // "id? want [...] mine [...]" line each board logs. A board staying "?"
+    // is either not hearing this, or hearing a serial that is not its own.
+    serial.writeLine("id-> [" + msg + "]" +
+        (sn == "0" ? "   <-- NO SERIAL SET for " + name : ""))
+    for (let attempt = 0; attempt <= 2; attempt++) {
+        radio.sendString(msg)
+        basic.pause(120)
+    }
+}
+
 function sendNeuron(index: number) {
     let name = boardNames[index]
     let weights = netWeights[index]
 
     // Identity first: only the board whose serial number matches takes this
-    // name. Everything after it is addressed to the name, so this must land.
-    radio.sendString(boardSerials[index] + "=" + name)
-    basic.pause(100)
+    // name. Everything after it is addressed to the name, so this MUST land --
+    // and radio is unacknowledged, so a single send loses the board for the
+    // whole round. Sent three times; a repeat is harmless because a board that
+    // already has the name simply re-adopts it.
+    sendIdentity(name)
     radio.sendValue(name + "i", weights.length)   // fanIn
     basic.pause(60)
     radio.sendValue(name + "b", netBias[index])   // bias
@@ -241,13 +310,17 @@ function sendOutput(index: number) {
     radio.sendValue(name + "cb", col[2])
     basic.pause(120)
 
-    // "<name>m<n>:" is 5 characters, leaving 14 of the 19-character limit.
+    // "<name>m<n>:" is 5 characters while the chunk index is one digit, leaving
+    // 14 of the 19-character radio limit. At chunk 10 the header grows to 6, so
+    // 13 is used throughout -- a message past 130 characters would otherwise
+    // emit a 20-character message that the radio silently truncates.
     let chunk = 0
     let pos = 0
     while (pos < msg.length) {
-        radio.sendString(name + "m" + chunk + ":" + msg.substr(pos, 14))
+        let take = chunk < 10 ? 14 : 13
+        radio.sendString(name + "m" + chunk + ":" + msg.substr(pos, take))
         basic.pause(150)
-        pos = pos + 14
+        pos = pos + take
         chunk = chunk + 1
     }
     serial.writeLine("sent " + name + " message: " + msg)
@@ -259,10 +332,21 @@ function sendInput(index: number) {
     let values = inputChoices[index]
     let pics = inputPictures[index]
 
-    radio.sendString(inputSerials[index] + "=" + name)
-    basic.pause(100)
+    sendIdentity(name)
     radio.sendValue(name + "n", values.length)        // how many choices
     basic.pause(200)
+
+    // How this board scales its value before sending it on. "s" of 0 means
+    // "no scaling"; anything else is the divisor, with "m" the mean.
+    if (normOn && index <= normMean.length - 1) {
+        radio.sendValue(name + "m", normMean[index])
+        basic.pause(150)
+        radio.sendValue(name + "s", normStd[index])
+        basic.pause(150)
+    } else {
+        radio.sendValue(name + "s", 0)
+        basic.pause(150)
+    }
 
     // VALUES FIRST, all of them, before any picture. The values are what the
     // board needs to work at all; the big picture strings are decoration.
@@ -304,7 +388,7 @@ function checkInputTables() {
                     ": " + inputPictures[i][k].length + " chars, need 25")
             }
         }
-        if (inputSerials[i] == "0") {
+        if (serialOf(inputNames[i]) == "0") {
             serial.writeLine("WARNING " + inputNames[i] + ": serial not set")
         }
     }
@@ -355,6 +439,300 @@ radio.onReceivedValue(function (name, value) {
 })
 
 // ============================================================
+//  6. UART -> RADIO BRIDGE
+//
+//  The browser (kids.html) opens this board over WebUSB and writes plain text
+//  lines. Each line is one command; the board answers with a line so the page
+//  can wait for it rather than guessing at timing.
+//
+//    PING                    -> "OK PING"        is anyone there?
+//    ARCH <n0,n1,...>        -> "OK ARCH ..."    layer sizes, e.g. "2,3,2"
+//    SERIAL <name> <sn>      -> "OK SERIAL <name>"  which physical board plays
+//                                                this neuron, by name,
+//                                                e.g. "SERIAL h0 -1394225184"
+//    NEURON <i> <b> <w,w,..> -> "OK NEURON <i>"  one neuron's bias + weights
+//    MSG <i> <text>          -> "OK MSG <i>"     win message for output i
+//    COL <i> <r> <g> <b>     -> "OK COL <i>"     win colour for output i
+//    THRESH <v>              -> "OK THRESH"      win threshold
+//    NORM <i> <mean> <std>   -> "OK NORM <i>"    how x board i scales its value
+//    NORM off                -> "OK NORM off"   send raw values instead
+//    CHOICES <i> <v,v,...>   -> "OK CHOICES <i>" an x board's values
+//    PIC <i> <k> <25 bits>   -> "OK PIC <i> <k>" one picture, as 0/1 text
+//    SEND                    -> "OK SEND"        push everything over radio
+//    CALC                    -> "OK CALC"        run one round
+//
+//  Names are assigned positionally: neuron i takes boardNames[i], so the
+//  serial-number table above still decides which physical board is which.
+//  A line that does not parse answers "ERR <reason>" and changes nothing.
+// ============================================================
+
+// Split "a,b,c" into numbers. Returns an empty array for an empty string.
+function parseNumbers(csv: string): number[] {
+    let out: number[] = []
+    let cur = ""
+    for (let i = 0; i <= csv.length - 1; i++) {
+        let ch = csv.charAt(i)
+        if (ch == ",") {
+            if (cur.length > 0) {
+                out.push(parseFloat(cur))
+            }
+            cur = ""
+        } else if (ch != " ") {
+            cur = cur + ch
+        }
+    }
+    if (cur.length > 0) {
+        out.push(parseFloat(cur))
+    }
+    return out
+}
+
+// Split a line on spaces into at most `max` fields. Once max-1 fields are out,
+// the rest of the line becomes the final field verbatim -- so a win message may
+// contain spaces ("MSG 1 sehr frech heute" keeps all three words).
+function splitFields(line: string, max: number): string[] {
+    let out: string[] = []
+    let cur = ""
+    let i = 0
+    while (i <= line.length - 1) {
+        let ch = line.charAt(i)
+        if (ch == " " && out.length < max - 1) {
+            if (cur.length > 0) {
+                out.push(cur)
+                cur = ""
+            }
+            // Skip any run of spaces.
+            while (i + 1 <= line.length - 1 && line.charAt(i + 1) == " ") {
+                i = i + 1
+            }
+        } else {
+            cur = cur + ch
+        }
+        i = i + 1
+    }
+    if (cur.length > 0) {
+        out.push(cur)
+    }
+    return out
+}
+
+// Grow an array of arrays so index i exists.
+function ensureRow(arr: number[][], i: number) {
+    while (arr.length <= i) {
+        arr.push([])
+    }
+}
+
+function handleLine(line: string) {
+    // Strip a trailing CR: browsers commonly send "\r\n".
+    let s = line
+    while (s.length > 0 && (s.charAt(s.length - 1) == "\r" || s.charAt(s.length - 1) == "\n")) {
+        s = s.substr(0, s.length - 1)
+    }
+    if (s.length == 0) {
+        return
+    }
+    // How many fields to split into depends on the command: MSG's text is the
+    // rest of the line and must not be split at its spaces, whereas COL needs
+    // five separate numbers. Splitting everything at 5 truncated messages to
+    // their first word.
+    let cmd = splitFields(s, 2)[0]
+    let f = splitFields(s, cmd == "MSG" ? 3 : 5)
+
+    if (cmd == "PING") {
+        serial.writeLine("OK PING")
+        return
+    }
+
+    if (cmd == "ARCH") {
+        if (f.length < 2) {
+            serial.writeLine("ERR ARCH needs sizes")
+            return
+        }
+        let sizes = parseNumbers(f[1])
+        if (sizes.length < 2) {
+            serial.writeLine("ERR ARCH needs at least 2 layers")
+            return
+        }
+        // The neuron boards are named h0.. then y0.., so rebuild both name
+        // tables from the architecture. The serial table keeps its order, so
+        // board i keeps the physical board it always had.
+        // Hidden neurons are numbered ACROSS all hidden layers (h0, h1, h2, ...),
+        // not restarted per layer -- two layers both starting at h0 would give
+        // two boards the same name and they would fight over every message.
+        let names: string[] = []
+        let hn = 0
+        for (let l = 1; l <= sizes.length - 2; l++) {
+            for (let i = 0; i <= sizes[l] - 1; i++) {
+                names.push("h" + hn)
+                hn = hn + 1
+            }
+        }
+        let outs: string[] = []
+        for (let i = 0; i <= sizes[sizes.length - 1] - 1; i++) {
+            outs.push("y" + i)
+            names.push("y" + i)
+        }
+        boardNames = names
+        outputNames = outs
+        serial.writeLine("OK ARCH " + names.length + " neurons")
+        return
+    }
+
+    if (cmd == "SERIAL") {
+        // Tell the bridge which physical board plays a given neuron, so the
+        // page owns the mapping and nobody has to edit the table above.
+        // Addressed by NAME ("x0", "h2", "y1"), which needs no role flag and
+        // cannot be desynchronised from a second table.
+        if (f.length < 3) {
+            serial.writeLine("ERR SERIAL needs name serial")
+            return
+        }
+        setSerial(f[1], f[2])
+        serial.writeLine("OK SERIAL " + f[1])
+        return
+    }
+
+    if (cmd == "NEURON") {
+        if (f.length < 4) {
+            serial.writeLine("ERR NEURON needs index bias weights")
+            return
+        }
+        let i = parseInt(f[1])
+        if (i < 0 || i > 40) {
+            serial.writeLine("ERR NEURON bad index")
+            return
+        }
+        while (netBias.length <= i) {
+            netBias.push(0)
+        }
+        ensureRow(netWeights, i)
+        netBias[i] = parseFloat(f[2])
+        netWeights[i] = parseNumbers(f[3])
+        serial.writeLine("OK NEURON " + i)
+        return
+    }
+
+    if (cmd == "MSG") {
+        if (f.length < 3) {
+            serial.writeLine("ERR MSG needs index text")
+            return
+        }
+        let i = parseInt(f[1])
+        while (outputMessages.length <= i) {
+            outputMessages.push("")
+        }
+        outputMessages[i] = f[2]
+        serial.writeLine("OK MSG " + i)
+        return
+    }
+
+    if (cmd == "COL") {
+        if (f.length < 5) {
+            serial.writeLine("ERR COL needs index r g b")
+            return
+        }
+        let i = parseInt(f[1])
+        ensureRow(outputColors, i)
+        outputColors[i] = [parseFloat(f[2]), parseFloat(f[3]), parseFloat(f[4])]
+        serial.writeLine("OK COL " + i)
+        return
+    }
+
+    if (cmd == "THRESH") {
+        if (f.length < 2) {
+            serial.writeLine("ERR THRESH needs a value")
+            return
+        }
+        outputThreshold = parseFloat(f[1])
+        serial.writeLine("OK THRESH")
+        return
+    }
+
+    if (cmd == "NORM") {
+        if (f.length < 2) {
+            serial.writeLine("ERR NORM needs index mean std, or off")
+            return
+        }
+        if (f[1] == "off") {
+            normOn = false
+            serial.writeLine("OK NORM off")
+            return
+        }
+        if (f.length < 4) {
+            serial.writeLine("ERR NORM needs index mean std")
+            return
+        }
+        let ni = parseInt(f[1])
+        while (normMean.length <= ni) {
+            normMean.push(0)
+            normStd.push(1)
+        }
+        normMean[ni] = parseFloat(f[2])
+        let sd = parseFloat(f[3])
+        normStd[ni] = sd == 0 ? 1 : sd
+        normOn = true
+        serial.writeLine("OK NORM " + ni)
+        return
+    }
+
+    if (cmd == "CHOICES") {
+        if (f.length < 3) {
+            serial.writeLine("ERR CHOICES needs index values")
+            return
+        }
+        let i = parseInt(f[1])
+        ensureRow(inputChoices, i)
+        inputChoices[i] = parseNumbers(f[2])
+        serial.writeLine("OK CHOICES " + i)
+        return
+    }
+
+    if (cmd == "PIC") {
+        if (f.length < 4) {
+            serial.writeLine("ERR PIC needs board choice bits")
+            return
+        }
+        let bi = parseInt(f[1])
+        let k = parseInt(f[2])
+        let bits = f[3]
+        if (bits.length != 25) {
+            serial.writeLine("ERR PIC needs 25 bits, got " + bits.length)
+            return
+        }
+        while (inputPictures.length <= bi) {
+            inputPictures.push([])
+        }
+        while (inputPictures[bi].length <= k) {
+            inputPictures[bi].push("0000000000000000000000000")
+        }
+        inputPictures[bi][k] = bits
+        serial.writeLine("OK PIC " + bi + " " + k)
+        return
+    }
+
+    if (cmd == "SEND") {
+        sendAll()
+        serial.writeLine("OK SEND")
+        return
+    }
+
+    if (cmd == "CALC") {
+        ySeen[0] = false
+        ySeen[1] = false
+        radio.sendValue("calc", 0)
+        serial.writeLine("OK CALC")
+        return
+    }
+
+    serial.writeLine("ERR unknown command " + cmd)
+}
+
+serial.onDataReceived(serial.delimiters(Delimiters.NewLine), function () {
+    handleLine(serial.readLine())
+})
+
+// ============================================================
 //  5. Buttons
 // ============================================================
 input.onButtonEvent(Button.A, input.buttonEventClick(), function () {
@@ -370,17 +748,27 @@ input.onButtonEvent(Button.B, input.buttonEventClick(), function () {
 
 input.onButtonEvent(Button.AB, input.buttonEventClick(), function () {
     serial.writeLine("=== board table ===")
-    for (let i = 0; i <= inputNames.length - 1; i++) {
-        serial.writeLine(inputNames[i] + "  serial " + inputSerials[i] +
-            "  choices " + inputChoices[i].length +
-            "  pictures " + inputPictures[i].length +
-            (inputSerials[i] == "0" ? "   <-- SERIAL NOT SET" : ""))
+    for (let i = 0; i <= allNames.length - 1; i++) {
+        let nm = allNames[i]
+        let line = nm + "  serial " + allSerials[i]
+        // Add whatever else is known about this board.
+        for (let k = 0; k <= inputNames.length - 1; k++) {
+            if (inputNames[k] == nm) {
+                line = line + "  choices " + inputChoices[k].length +
+                       "  pictures " + inputPictures[k].length
+            }
+        }
+        for (let k = 0; k <= boardNames.length - 1; k++) {
+            if (boardNames[k] == nm && k <= netWeights.length - 1) {
+                line = line + "  fanIn " + netWeights[k].length +
+                       "  bias " + netBias[k]
+            }
+        }
+        if (allSerials[i] == "0") {
+            line = line + "   <-- SERIAL NOT SET"
+        }
+        serial.writeLine(line)
         // Without this the USB serial link drops characters mid-line.
-        basic.pause(50)
-    }
-    for (let i = 0; i <= boardNames.length - 1; i++) {
-        serial.writeLine(boardNames[i] + "  serial " + boardSerials[i] +
-            "  fanIn " + netWeights[i].length + "  bias " + netBias[i])
         basic.pause(50)
     }
 })

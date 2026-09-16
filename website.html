@@ -1,0 +1,2053 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Calliope mini Neuronales Netz</title>
+<style>
+  :root{
+    --bg:#eef3fb; --panel:#ffffff; --panel2:#f3f6fb; --line:#cdd8ea;
+    --fg:#17202e; --muted:#5b6880; --accent:#2f6fed;
+    --pos:#2f6fed; --neg:#e0453c; --ok:#1c8a4d; --err:#c02a22;
+    --in:#f5a524; --hid:#7c5cd6; --out:#1c8a4d;
+    --radius:16px;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+       font:16px/1.6 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+
+  /* White margin down the left and right of the whole page. */
+  .page{max-width:1180px;margin:0 auto;padding:0 40px 56px}
+  @media (max-width:820px){ .page{padding:0 18px 40px} }
+
+  header{text-align:center;padding:26px 0 18px}
+  header h1{font-size:30px;margin:0;font-weight:800;letter-spacing:-.02em}
+  header p{margin:0;color:var(--muted);font-size:15px}
+
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+         padding:20px;margin-bottom:22px;box-shadow:0 1px 2px rgba(20,40,80,.04)}
+  .panel > h2{font-size:18px;margin:0 0 4px;font-weight:700}
+  .panel > h2 .step{display:inline-flex;align-items:center;justify-content:center;
+        width:26px;height:26px;border-radius:50%;background:var(--accent);color:#fff;
+        font-size:14px;font-weight:700;margin-right:9px;vertical-align:-3px}
+  .panel > .lead{margin:0 0 16px;color:var(--muted);font-size:14px}
+
+  button{cursor:pointer;background:var(--panel2);color:var(--fg);border:1px solid var(--line);
+         border-radius:10px;padding:9px 15px;font:inherit;font-weight:600}
+  button:hover{border-color:var(--accent);background:#fff}
+  button.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+  button.primary:hover{background:#2560d8}
+  button.big{font-size:18px;padding:12px 26px;border-radius:12px}
+  input,select{background:#fff;color:var(--fg);border:1px solid var(--line);
+               border-radius:9px;padding:8px 10px;font:inherit}
+  input[type=number]{width:96px}
+  .btns{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+
+  /* ---------- the network area ---------- */
+  /* stretch, not start, so the try-box matches the height of the network column */
+  .netwrap{display:grid;grid-template-columns:230px 1fr;gap:18px;align-items:stretch}
+  @media (max-width:900px){ .netwrap{grid-template-columns:1fr} }
+
+  /* Size steppers, positioned above the layer columns they control. */
+  .layerbar{position:relative;height:74px;margin-bottom:2px}
+  .stepper{position:absolute;transform:translateX(-50%);text-align:center;width:150px}
+  .stepper .cap{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;
+                margin-bottom:5px;white-space:nowrap}
+  .stepper.in  .cap{color:var(--in)}
+  .stepper.hid .cap{color:var(--hid)}
+  .stepper.out .cap{color:var(--out)}
+  .pm{display:inline-flex;align-items:center;gap:0;border:1px solid var(--line);
+      border-radius:10px;overflow:hidden;background:#fff}
+  .pm button{border:0;border-radius:0;background:#fff;width:34px;height:34px;padding:0;
+             font-size:19px;line-height:1;font-weight:700;color:var(--accent)}
+  .pm button:hover:not(:disabled){background:var(--panel2)}
+  .pm button:disabled{color:#c2cadb;cursor:default}
+  .pm .val{min-width:34px;text-align:center;font-weight:700;font-variant-numeric:tabular-nums;
+           border-left:1px solid var(--line);border-right:1px solid var(--line);height:34px;
+           line-height:34px;background:var(--panel2)}
+
+  #netView{height:430px}
+  canvas{width:100%;background:var(--panel2);border:1px solid var(--line);
+         border-radius:12px;display:block;touch-action:none}
+
+  /* Activation picker, below the hidden layers. */
+  .actbar{position:relative;margin-top:10px;min-height:118px}
+  .actbox{position:absolute;transform:translateX(-50%);text-align:center;width:250px}
+  .actbox .cap{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;
+               color:var(--hid);margin-bottom:5px}
+  .actbox select{font-weight:600}
+
+  .legend{display:flex;gap:16px;flex-wrap:wrap;font-size:13px;color:var(--muted);
+          margin-top:14px;justify-content:center}
+  .swatch{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:5px;
+          vertical-align:middle}
+
+  /* ---------- try one example, beside the inputs ---------- */
+  /* Column layout so the answer box can absorb the leftover height and the
+     whole card ends level with the network beside it. */
+  .trybox{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:14px;
+          display:flex;flex-direction:column}
+  .trybox h3{margin:0 0 3px;font-size:15px;font-weight:700}
+  .trybox .sub{margin:0 0 12px;color:var(--muted);font-size:13px}
+  .tryrow{display:flex;gap:8px;align-items:center;margin-bottom:8px}
+  .tryrow label{flex:1;font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;
+                white-space:nowrap}
+  .tryrow input{width:84px}
+  .answer{margin-top:12px;background:#fff;border:1px solid var(--line);border-radius:10px;
+          padding:10px;min-height:44px;font-size:14px;flex:1;overflow:auto}
+  .answer .big{font-size:19px;font-weight:800}
+  .bar{height:9px;border-radius:5px;background:#e3e9f4;overflow:hidden;margin-top:3px}
+  .bar i{display:block;height:100%;background:var(--accent)}
+  .prob{margin-top:7px;font-size:12.5px;color:var(--muted)}
+
+  /* ---------- data table ---------- */
+  table{border-collapse:collapse;width:100%;font-size:14px}
+  th,td{border:1px solid var(--line);padding:0}
+  th{background:var(--panel2);padding:7px 8px;color:var(--muted);font-weight:700;
+     font-size:12.5px;white-space:nowrap}
+  td input{width:100%;border:0;border-radius:0;background:transparent;padding:7px 8px;font:inherit}
+  th input{width:100%;min-width:56px;border:0;border-radius:0;background:transparent;
+           padding:6px 8px;font:inherit;font-weight:700;font-size:12.5px;color:var(--muted)}
+  th input:focus,td input:focus{outline:2px solid var(--accent);outline-offset:-2px}
+  .tablewrap{max-height:320px;overflow:auto;border:1px solid var(--line);border-radius:12px}
+
+  /* ---------- training ---------- */
+  .teachrow{display:flex;gap:22px;flex-wrap:wrap;align-items:flex-end}
+  .field label{display:block;font-size:13px;font-weight:600;margin-bottom:4px}
+  .field small{display:block;color:var(--muted);font-weight:400;font-size:12px}
+
+  .metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px}
+  @media (max-width:700px){ .metrics{grid-template-columns:repeat(2,1fr)} }
+  .metric{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:10px 12px}
+  .metric .k{color:var(--muted);font-size:11.5px;text-transform:uppercase;letter-spacing:.04em}
+  .metric .v{font-size:21px;font-weight:700;font-variant-numeric:tabular-nums;margin-top:2px}
+  #lossChart{height:190px}
+
+  details{border:1px solid var(--line);border-radius:12px;background:var(--panel);
+          padding:0;margin-bottom:22px}
+  details > summary{cursor:pointer;padding:16px 20px;font-size:18px;font-weight:700;
+                    list-style:none;display:flex;align-items:center;gap:9px}
+  details > summary::-webkit-details-marker{display:none}
+  details > summary::before{content:"▸";color:var(--accent);font-size:15px}
+  details[open] > summary::before{content:"▾"}
+  details .body{padding:0 20px 20px}
+  details.inner{margin:14px 0 0;border-radius:10px}
+  details.inner > summary{font-size:14px;padding:10px 14px}
+  details.inner .body{padding:0 14px 14px}
+
+  .hint{color:var(--muted);font-size:13px;margin:8px 0 0}
+  .msg{margin-top:10px;font-size:13.5px;min-height:18px}
+  .msg.err{color:var(--err)} .msg.ok{color:var(--ok)}
+
+  .inspector{margin-top:16px;border:1px solid var(--line);border-radius:12px;padding:14px;
+             background:var(--panel2)}
+  .inspector h3{margin:0 0 5px;font-size:15px}
+  .inspector .sub{color:var(--muted);font-size:13px;margin:0 0 10px}
+  .wtable{width:100%;font-size:13px;font-variant-numeric:tabular-nums}
+  .wtable td{padding:0;border:1px solid var(--line)}
+  .wtable td.lab{padding:5px 8px;color:var(--muted);white-space:nowrap}
+  .wtable input{width:100%;padding:5px 8px;border:0;background:#fff;font:inherit}
+  .kv{display:flex;justify-content:space-between;gap:10px;font-size:13px;padding:3px 0;
+      font-variant-numeric:tabular-nums}
+  .kv span:first-child{color:var(--muted)}
+
+  .overlay{position:fixed;inset:0;background:rgba(15,25,45,.5);display:none;
+           align-items:center;justify-content:center;padding:20px;z-index:20}
+  .overlay.open{display:flex}
+  .dialog{background:var(--panel);border-radius:var(--radius);padding:20px;
+          width:min(560px,100%);box-shadow:0 18px 50px rgba(0,0,0,.25)}
+  .dialog h3{margin:0 0 6px;font-size:18px}
+  .dialog textarea{width:100%;height:190px;resize:vertical;border:1px solid var(--line);
+                   border-radius:10px;padding:10px;
+                   font:13px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace}
+</style>
+</head>
+<body>
+<div class="page">
+
+<header>
+  <h1>Calliope mini Neuronales Netz</h1>
+</header>
+
+<!-- ============ THE NETWORK ============ -->
+<div class="panel">
+  <h2><span class="step">1</span>Your brain</h2>
+  <p class="lead">Use the <b>+</b> and <b>&minus;</b> buttons above each layer to make it bigger or
+     smaller. Click any circle or line in the picture to see its numbers.</p>
+
+  <div class="netwrap">
+    <!-- try one example, right next to the input layer -->
+    <div class="trybox">
+      <h3>Try one example</h3>
+      <p class="sub">Type some numbers and send them through.</p>
+      <div id="predInputs"></div>
+      <div class="btns" style="margin-top:10px">
+        <button class="primary" id="btnPredict">Send it through</button>
+        <button id="btnClearProbe">Clear</button>
+      </div>
+      <div class="answer" id="predOut">Nothing sent through yet.</div>
+    </div>
+
+    <div>
+      <!-- steppers sit above the layer they control -->
+      <div class="layerbar" id="layerBar"></div>
+      <canvas id="netView"></canvas>
+      <!-- activation picker sits below the hidden layers -->
+      <div class="actbar" id="actBar">
+        <div class="actbox" id="actBox">
+          <div class="cap">How many thinking layers</div>
+          <div id="hiddenCount"></div>
+          <!-- Only the activation picker hides when there are no hidden layers;
+               the layer count must stay so they can be added back. -->
+          <div id="actPick" style="margin-top:9px">
+            <div class="cap">Thinking style</div>
+            <select id="act">
+              <option value="sigmoid" selected>sigmoid &mdash; smooth 0 to 1</option>
+              <option value="tanh">tanh &mdash; smooth &minus;1 to 1</option>
+              <option value="relu">relu &mdash; keeps positives</option>
+              <option value="linear">linear &mdash; no bending</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      <div class="legend">
+        <span><span class="swatch" style="background:var(--pos)"></span>blue = pushes up</span>
+        <span><span class="swatch" style="background:var(--neg)"></span>red = pushes down</span>
+        <span>thicker = stronger</span>
+      </div>
+      <div id="archMsg" class="msg"></div>
+    </div>
+  </div>
+
+  <div class="inspector" id="inspector"></div>
+
+  <div class="btns" style="margin-top:14px">
+    <button id="btnExportCsv">Download the numbers</button>
+  </div>
+</div>
+
+<!-- ============ SEND TO THE MICRO:BITS ============ -->
+<div class="panel">
+  <h2><span class="step">4</span>Send it to the Calliopes</h2>
+  <p class="lead">Plug the <b>sender</b> board into this computer with a USB cable, press
+     <b>Connect</b>, then <b>Send the brain</b>. It passes everything on to the other boards
+     by radio &mdash; nobody has to change any code.</p>
+  <div class="btns">
+    <button class="primary" id="btnUsbConnect">Connect the sender</button>
+    <button id="btnUsbSend" disabled>Send the brain</button>
+    <button id="btnUsbCalc" disabled>Run one round</button>
+    <button id="btnUsbDisconnect" disabled>Disconnect</button>
+  </div>
+  <div id="usbMsg" class="msg"></div>
+
+  <details class="inner" id="answersPanel">
+    <summary>What do the answers mean?</summary>
+    <div class="body">
+      <p class="hint" style="margin-top:0">Give each answer a name. The Calliope shows it on its
+         screen when that answer wins, so &quot;frech&quot; is more fun than &quot;1&quot;.</p>
+      <div id="answerLabels"></div>
+    </div>
+  </details>
+
+  <details class="inner" id="boardsPanel">
+    <summary>Which Calliope is which neuron</summary>
+    <div class="body">
+      <p class="hint" style="margin-top:0">Press <b>B</b> on each board and it prints its own
+         number to the USB log. Paste that number here so the sender knows which board should
+         become which neuron. Keep the minus sign if there is one.</p>
+      <div class="btns" style="margin-bottom:10px">
+        <button id="btnPasteSerials">Paste a list&hellip;</button>
+        <button id="btnClearSerials">Clear all</button>
+      </div>
+      <div id="boardTable"></div>
+    </div>
+  </details>
+
+  <details class="inner">
+    <summary>What was sent</summary>
+    <div class="body">
+      <pre id="usbLog" style="margin:0;max-height:220px;overflow:auto;background:var(--panel2);
+           border:1px solid var(--line);border-radius:10px;padding:10px;font-size:12px;
+           white-space:pre-wrap"></pre>
+    </div>
+  </details>
+</div>
+
+<!-- ============ DATA ============ -->
+<div class="panel">
+  <h2><span class="step">2</span>Your examples</h2>
+  <p class="lead">One row is one example. Type the numbers, then put the right answer
+     (0, 1, 2&hellip;) in the last column. Empty rows are ignored.</p>
+  <div class="tablewrap"><table id="dataTable"></table></div>
+  <div class="btns" style="margin-top:12px">
+    <button id="btnAddRow">+ 1 row</button>
+    <button id="btnAddRows">+ 5 rows</button>
+    <button id="btnClear">Clear</button>
+    <select id="preset">
+      <option value="">Load an example&hellip;</option>
+      <option value="xor">XOR (2 in, 2 answers)</option>
+      <option value="circle">Circle vs ring (2 in, 2 answers)</option>
+      <option value="blobs3">3 blobs (2 in, 3 answers)</option>
+      <option value="spiral">Two spirals (2 in, 2 answers)</option>
+    </select>
+    <button id="btnCsv">Paste data&hellip;</button>
+  </div>
+  <div id="dataMsg" class="msg"></div>
+</div>
+
+<!-- ============ TEACH ============ -->
+<div class="panel">
+  <h2><span class="step">3</span>Teach it</h2>
+  <p class="lead">Press the big button and watch the lines change.</p>
+  <div class="teachrow">
+    <div class="field">
+      <label for="lr">Learning speed<small>how big a step each time</small></label>
+      <input type="number" id="lr" step="0.001" min="0.0001" value="0.05">
+    </div>
+    <div class="field">
+      <label for="epochs">Practice rounds<small>how many times it practises</small></label>
+      <input type="number" id="epochs" min="1" value="500">
+    </div>
+    <div class="btns">
+      <button class="primary big" id="btnTrain">Train!</button>
+      <button id="btnStop">Stop</button>
+      <button id="btnReset">Start over</button>
+    </div>
+  </div>
+  <div id="trainMsg" class="msg"></div>
+
+  <details class="inner">
+    <summary>Expert settings</summary>
+    <div class="body">
+      <div class="teachrow">
+        <div class="field">
+          <label for="splitMode">How should we test it?<small>a fresh exam is fairer</small></label>
+          <select id="splitMode">
+            <option value="random">Keep some rows back for the exam</option>
+            <option value="same">Use the same rows for both</option>
+          </select>
+        </div>
+        <div class="field" id="splitRow">
+          <label for="split">Practice rows: <span id="splitVal">70%</span></label>
+          <input type="range" id="split" min="10" max="95" step="5" value="70">
+        </div>
+        <div class="field">
+          <label for="batch">Batch size<small>0 = all rows at once</small></label>
+          <input type="number" id="batch" min="0" value="0">
+        </div>
+        <div class="field">
+          <label for="seed">Random seed<small>same seed = same start</small></label>
+          <input type="number" id="seed" value="42">
+        </div>
+        <div class="field">
+          <label for="standardize">Scale the inputs<small>shrink big numbers</small></label>
+          <input type="checkbox" id="standardize" checked>
+        </div>
+      </div>
+      <p class="hint" id="splitInfo"></p>
+    </div>
+  </details>
+</div>
+
+<!-- ============ RESULTS (collapsed by default) ============ -->
+<details id="resultsPanel">
+  <summary>How is it doing?</summary>
+  <div class="body">
+    <div class="metrics">
+      <div class="metric"><div class="k">Rounds done</div><div class="v" id="mEpoch">0</div></div>
+      <div class="metric"><div class="k">Mistakes</div><div class="v" id="mTrainLoss">&mdash;</div></div>
+      <div class="metric"><div class="k">Right in practice</div><div class="v" id="mTrainAcc">&mdash;</div></div>
+      <div class="metric"><div class="k">Right in the exam</div><div class="v" id="mTestAcc">&mdash;</div></div>
+    </div>
+    <canvas id="lossChart"></canvas>
+    <div class="legend">
+      <span><span class="swatch" style="background:#2f6fed"></span>mistakes &mdash; should go down</span>
+      <span><span class="swatch" style="background:#1c8a4d"></span>right in practice &mdash; should go up</span>
+      <span><span class="swatch" style="background:#d97706"></span>right in the exam</span>
+    </div>
+    <details class="inner">
+      <summary>Which answers did it mix up?</summary>
+      <div class="body" id="confusion"></div>
+    </details>
+  </div>
+</details>
+
+</div><!-- /page -->
+
+<div class="overlay" id="snModal">
+  <div class="dialog">
+    <h3>Paste the board numbers</h3>
+    <p class="hint" style="margin:0 0 10px">One number per line, <b>in the order shown in the
+       table</b> &mdash; inputs first, then the hidden neurons, then the answers. Blank lines are
+       skipped. A line may also be written as <code>h0 = -1394225184</code> to name the board
+       explicitly, in which case the order does not matter.</p>
+    <textarea id="snText" placeholder="-2022602061&#10;984150378&#10;-1394225184&#10;-1280350870&#10;850974008&#10;1240653277&#10;1843421070"></textarea>
+    <div id="snMsg" class="msg"></div>
+    <div class="btns" style="justify-content:flex-end;margin-top:10px">
+      <button id="snCancel">Cancel</button>
+      <button class="primary" id="snLoad">Use these numbers</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="csvModal">
+  <div class="dialog">
+    <h3>Paste your data</h3>
+    <p class="hint" style="margin:0 0 10px">One example per line. Separate the numbers with commas,
+       spaces or tabs, and put the right answer last. A heading line is skipped automatically.<br>
+       Example: <code>1.5, 2.0, 0</code></p>
+    <textarea id="csvText" placeholder="1.5, 2.0, 0&#10;3.1, 0.4, 1&#10;0.2, 2.8, 0"></textarea>
+    <div id="csvMsg" class="msg"></div>
+    <div class="btns" style="justify-content:flex-end;margin-top:10px">
+      <button id="csvCancel">Cancel</button>
+      <button class="primary" id="csvLoad">Load these rows</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ============================================================
+   Activations
+   ============================================================ */
+const ACT = {
+  tanh:    { f: z => Math.tanh(z),       d: (z,a) => 1 - a*a },
+  relu:    { f: z => z > 0 ? z : 0,      d: (z,a) => z > 0 ? 1 : 0 },
+  sigmoid: { f: z => 1/(1+Math.exp(-z)), d: (z,a) => a*(1-a) },
+  linear:  { f: z => z,                  d: () => 1 }
+};
+
+/* Deterministic RNG so runs are reproducible from the seed field. */
+function makeRng(seed){
+  let s = (seed >>> 0) || 1;
+  return function(){
+    s ^= s << 13; s >>>= 0;
+    s ^= s >> 17;
+    s ^= s << 5;  s >>>= 0;
+    return s / 4294967296;
+  };
+}
+function makeGauss(rng){
+  return function(){
+    let u = 0, v = 0;
+    while (u === 0) u = rng();
+    while (v === 0) v = rng();
+    return Math.sqrt(-2*Math.log(u)) * Math.cos(2*Math.PI*v);
+  };
+}
+
+/* ============================================================
+   Network
+   ============================================================ */
+function makeNet(sizes, actName, rng){
+  const gauss = makeGauss(rng);
+  const W = [], b = [];
+  for (let l = 1; l < sizes.length; l++){
+    const fanIn = sizes[l-1];
+    // He init for relu, Xavier otherwise.
+    const scale = actName === 'relu' ? Math.sqrt(2/fanIn) : Math.sqrt(1/fanIn);
+    const w = [];
+    for (let i = 0; i < sizes[l]; i++){
+      const row = [];
+      for (let j = 0; j < fanIn; j++) row.push(gauss()*scale);
+      w.push(row);
+    }
+    W.push(w);
+    b.push(new Array(sizes[l]).fill(0));
+  }
+  return { sizes, act: actName, W, b, L: sizes.length - 1 };
+}
+
+function softmax(z){
+  const m = Math.max.apply(null, z);
+  const e = z.map(v => Math.exp(v - m));
+  const s = e.reduce((a,c) => a+c, 0);
+  return e.map(v => v/s);
+}
+
+/* Returns { zs, as } with as[0] === input, as[L] === softmax probabilities. */
+function forward(net, x){
+  const act = ACT[net.act];
+  const as = [x], zs = [null];
+  let a = x;
+  for (let l = 0; l < net.L; l++){
+    const W = net.W[l], b = net.b[l];
+    const z = new Array(W.length);
+    for (let i = 0; i < W.length; i++){
+      const row = W[i];
+      let s = b[i];
+      for (let j = 0; j < row.length; j++) s += row[j]*a[j];
+      z[i] = s;
+    }
+    zs.push(z);
+    a = (l === net.L - 1) ? softmax(z) : z.map(act.f);
+    as.push(a);
+  }
+  return { zs, as };
+}
+
+function predict(net, x){ return forward(net, x).as[net.L]; }
+function argmax(v){ let bi = 0; for (let i = 1; i < v.length; i++) if (v[i] > v[bi]) bi = i; return bi; }
+
+/* One pass of mini-batch SGD over the given samples. Returns mean loss. */
+function trainEpoch(net, data, lr, batchSize, rng){
+  const act = ACT[net.act];
+  const idx = data.map((_, i) => i);
+  for (let i = idx.length - 1; i > 0; i--){            // Fisher-Yates shuffle
+    const j = Math.floor(rng()*(i+1));
+    const t = idx[i]; idx[i] = idx[j]; idx[j] = t;
+  }
+  const bs = batchSize > 0 ? Math.min(batchSize, idx.length) : idx.length;
+  let totalLoss = 0;
+
+  for (let start = 0; start < idx.length; start += bs){
+    const batch = idx.slice(start, start + bs);
+    const gW = net.W.map(w => w.map(r => new Array(r.length).fill(0)));
+    const gb = net.b.map(v => new Array(v.length).fill(0));
+
+    for (const si of batch){
+      const s = data[si];
+      const fp = forward(net, s.x);
+      const zs = fp.zs, as = fp.as;
+      const p = as[net.L];
+      totalLoss += -Math.log(Math.max(p[s.y], 1e-12));
+
+      // Softmax + cross-entropy: delta at the output is simply (p - onehot).
+      let delta = p.slice();
+      delta[s.y] -= 1;
+
+      for (let l = net.L - 1; l >= 0; l--){
+        const aPrev = as[l];
+        for (let i = 0; i < delta.length; i++){
+          gb[l][i] += delta[i];
+          const gRow = gW[l][i];
+          for (let j = 0; j < aPrev.length; j++) gRow[j] += delta[i]*aPrev[j];
+        }
+        if (l > 0){
+          const prev = new Array(aPrev.length).fill(0);
+          for (let i = 0; i < delta.length; i++){
+            const row = net.W[l][i], di = delta[i];
+            for (let j = 0; j < row.length; j++) prev[j] += row[j]*di;
+          }
+          for (let j = 0; j < prev.length; j++) prev[j] *= act.d(zs[l][j], as[l][j]);
+          delta = prev;
+        }
+      }
+    }
+
+    const step = lr / batch.length;
+    for (let l = 0; l < net.L; l++){
+      for (let i = 0; i < net.W[l].length; i++){
+        net.b[l][i] -= step*gb[l][i];
+        const row = net.W[l][i], grow = gW[l][i];
+        for (let j = 0; j < row.length; j++) row[j] -= step*grow[j];
+      }
+    }
+  }
+  return totalLoss / data.length;
+}
+
+function evaluate(net, data){
+  if (!data.length) return { loss: NaN, acc: NaN };
+  let loss = 0, correct = 0;
+  for (const s of data){
+    const p = predict(net, s.x);
+    loss += -Math.log(Math.max(p[s.y], 1e-12));
+    if (argmax(p) === s.y) correct++;
+  }
+  return { loss: loss/data.length, acc: correct/data.length };
+}
+
+/* ============================================================
+   State + DOM helpers
+   ============================================================ */
+const $ = id => document.getElementById(id);
+const esc = v => String(v == null ? '' : v).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
+const fmt = v => (v >= 0 ? ' ' : '') + v.toFixed(4);
+
+const state = {
+  rows: [],
+  colNames: [],
+  net: null,
+  nIn: 2,
+  nOut: 2,
+  hiddenSizes: [4],
+  history: [],
+  epoch: 0,
+  running: false,
+  norm: null,
+  split: null,
+  geom: null,
+  sel: null,
+  probe: null
+};
+
+const MAX_IN = 12, MAX_OUT = 10, MAX_HIDDEN_LAYERS = 4, MAX_HIDDEN = 12;
+
+function colName(i){
+  const v = state.colNames[i];
+  return (v && v.trim()) ? v.trim() : 'x' + i;
+}
+function neuronName(l, i){
+  if (!state.net) return 'x' + i;
+  if (l === 0) return colName(i);
+  if (l === state.net.L) return 'y' + i;
+  return 'h' + i;
+}
+function ensureColNames(n){
+  while (state.colNames.length < n) state.colNames.push('x' + state.colNames.length);
+  state.colNames.length = n;
+}
+
+/* Sizes are held in state (not read back out of inputs) because the +/- steppers
+   are rebuilt on every change and reading a just-replaced DOM node is fragile. */
+function nIn(){ return state.nIn; }
+function nOut(){ return state.nOut; }
+function layerSizes(){ return [state.nIn].concat(state.hiddenSizes, [state.nOut]); }
+
+/* ============================================================
+   Layer steppers, positioned over the diagram's columns
+   ============================================================ */
+/* Change a layer size, keeping the data table and probe fields in step. */
+function setInputs(n){
+  n = Math.max(1, Math.min(MAX_IN, n));
+  if (n === state.nIn) return;
+  state.nIn = n;
+  state.rows.forEach(r => { while (r.length < n+1) r.splice(r.length-1, 0, ''); r.length = n+1; });
+  ensureColNames(n);
+  renderTable(); renderPredictInputs(); resplit(); resetNet();
+}
+function setOutputs(n){
+  n = Math.max(2, Math.min(MAX_OUT, n));
+  if (n === state.nOut) return;
+  state.nOut = n;
+  resplit(); resetNet();
+}
+function setHiddenCount(n){
+  n = Math.max(0, Math.min(MAX_HIDDEN_LAYERS, n));
+  if (n === state.hiddenSizes.length) return;
+  while (state.hiddenSizes.length < n) state.hiddenSizes.push(4);
+  state.hiddenSizes.length = n;
+  resetNet();
+}
+function setHiddenSize(i, n){
+  n = Math.max(1, Math.min(MAX_HIDDEN, n));
+  if (state.hiddenSizes[i] === n) return;
+  state.hiddenSizes[i] = n;
+  resetNet();
+}
+
+/* One +/- control. `onSet` receives the new value. */
+function stepperHtml(cls, cap, value, min, max, key){
+  return '<div class="stepper ' + cls + '" data-key="' + key + '" style="left:0">' +
+           '<div class="cap">' + cap + '</div>' +
+           '<div class="pm">' +
+             '<button data-act="dec"' + (value <= min ? ' disabled' : '') + '>&minus;</button>' +
+             '<span class="val">' + value + '</span>' +
+             '<button data-act="inc"' + (value >= max ? ' disabled' : '') + '>+</button>' +
+           '</div>' +
+         '</div>';
+}
+
+/* Build the steppers, then place each one over its layer's column in the canvas.
+   Placement needs the geometry, so this runs after drawNet() has stored state.geom. */
+function renderLayerBar(){
+  const bar = $('layerBar');
+  const sizes = layerSizes();
+  const nH = state.hiddenSizes.length;
+  let html = '';
+  html += stepperHtml('in', 'Inputs', state.nIn, 1, MAX_IN, 'in');
+  for (let i = 0; i < nH; i++){
+    html += stepperHtml('hid', 'Hidden ' + (i+1), state.hiddenSizes[i], 1, MAX_HIDDEN, 'h' + i);
+  }
+  html += stepperHtml('out', 'Answers', state.nOut, 2, MAX_OUT, 'out');
+  bar.innerHTML = html;
+
+  bar.querySelectorAll('.stepper').forEach(el => {
+    el.querySelectorAll('button').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const key = el.dataset.key, d = btn.dataset.act === 'inc' ? 1 : -1;
+        if (key === 'in')       setInputs(state.nIn + d);
+        else if (key === 'out') setOutputs(state.nOut + d);
+        else                    setHiddenSize(+key.slice(1), state.hiddenSizes[+key.slice(1)] + d);
+      });
+    });
+  });
+  positionLayerBar();
+}
+
+/* Put each stepper above the x of its layer's column, and the activation picker
+   below the middle of the hidden layers. */
+function positionLayerBar(){
+  const g = state.geom;
+  if (!g) return;
+  const cv = $('netView');
+  const w = cv.clientWidth;
+  const steppers = $('layerBar').querySelectorAll('.stepper');
+  const cols = g.nodes.length;
+  for (let l = 0; l < cols && l < steppers.length; l++){
+    const x = g.nodes[l][0].x;
+    // Keep the control inside the canvas even for edge columns.
+    steppers[l].style.left = Math.max(78, Math.min(w - 78, x)) + 'px';
+  }
+  // Activation picker: centred under the hidden layers, or under the middle of
+  // the whole net when there are none.
+  const box = $('actBox');
+  const nH = state.hiddenSizes.length;
+  let ax;
+  if (nH > 0){
+    const first = g.nodes[1][0].x, last = g.nodes[nH][0].x;
+    ax = (first + last)/2;
+  } else {
+    ax = w/2;
+  }
+  box.style.left = Math.max(128, Math.min(w - 128, ax)) + 'px';
+  // The bar always stays: it carries the layer-count control, without which a
+  // network at zero hidden layers could never get one back. Only the activation
+  // picker goes, since with no hidden layer there is nothing for it to apply to.
+  $('actPick').style.display = nH > 0 ? 'block' : 'none';
+}
+
+/* The hidden-layer count gets its own control, under the diagram's caption row. */
+function renderHiddenCount(){
+  const el = $('hiddenCount');
+  if (!el) return;
+  el.innerHTML =
+    '<div class="pm">' +
+      '<button data-act="dec"' + (state.hiddenSizes.length <= 0 ? ' disabled' : '') + '>&minus;</button>' +
+      '<span class="val">' + state.hiddenSizes.length + '</span>' +
+      '<button data-act="inc"' + (state.hiddenSizes.length >= MAX_HIDDEN_LAYERS ? ' disabled' : '') + '>+</button>' +
+    '</div>';
+  el.querySelectorAll('button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      setHiddenCount(state.hiddenSizes.length + (btn.dataset.act === 'inc' ? 1 : -1));
+    });
+  });
+}
+
+/* ---- data table ---- */
+function renderTable(){
+  const t = $('dataTable');
+  const n = nIn();
+  ensureColNames(n);
+  let html = '<thead><tr><th style="width:34px">#</th>';
+  for (let i = 0; i < n; i++){
+    html += '<th><input class="colName" data-c="' + i + '" value="' + esc(colName(i)) +
+            '" title="rename this column"></th>';
+  }
+  html += '<th style="width:86px">answer</th><th style="width:30px"></th></tr></thead><tbody>';
+  state.rows.forEach((r, ri) => {
+    html += '<tr><th>' + (ri+1) + '</th>';
+    for (let i = 0; i < n; i++){
+      html += '<td><input data-r="' + ri + '" data-c="' + i + '" value="' + esc(r[i]) + '"></td>';
+    }
+    html += '<td><input data-r="' + ri + '" data-c="label" value="' + esc(r[n]) + '"></td>';
+    html += '<td><button data-del="' + ri + '" title="delete row" ' +
+            'style="border:0;background:transparent;color:var(--muted);padding:2px 8px;font-size:17px">&times;</button></td></tr>';
+  });
+  t.innerHTML = html + '</tbody>';
+
+  t.querySelectorAll('input.colName').forEach(inp => {
+    inp.addEventListener('input', () => {
+      const c = +inp.dataset.c;
+      state.colNames[c] = inp.value;
+      const labs = $('predInputs').querySelectorAll('label');
+      if (labs[c]) labs[c].textContent = colName(c);
+      drawNet(); renderInspector();
+    });
+  });
+  t.querySelectorAll('tbody input').forEach(inp => {
+    inp.addEventListener('input', () => {
+      const r = +inp.dataset.r;
+      const c = inp.dataset.c === 'label' ? nIn() : +inp.dataset.c;
+      state.rows[r][c] = inp.value;
+      updateSplitInfo();
+    });
+  });
+  t.querySelectorAll('button[data-del]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      state.rows.splice(+btn.dataset.del, 1);
+      renderTable(); resplit();
+    });
+  });
+}
+
+function addRows(k){
+  const n = nIn();
+  for (let i = 0; i < k; i++) state.rows.push(new Array(n+1).fill(''));
+  renderTable();
+}
+
+function parseData(){
+  const n = nIn(), k = nOut();
+  const data = [], errors = [];
+  state.rows.forEach((r, ri) => {
+    if (r.slice(0, n+1).every(c => String(c == null ? '' : c).trim() === '')) return;
+    const x = [];
+    for (let i = 0; i < n; i++){
+      const v = parseFloat(r[i]);
+      if (!isFinite(v)){ errors.push('row ' + (ri+1) + ': ' + colName(i) + ' is not a number'); return; }
+      x.push(v);
+    }
+    const y = parseInt(r[n]);
+    if (!isFinite(y) || y < 0 || y >= k){
+      errors.push('row ' + (ri+1) + ': the answer must be a whole number 0…' + (k-1));
+      return;
+    }
+    data.push({ x, y, row: ri });
+  });
+  return { data, errors };
+}
+
+/* ---- train/test split ---- */
+function resplit(){
+  const parsed = parseData();
+  const data = parsed.data;
+  if ($('splitMode').value === 'same'){
+    state.split = { train: data, test: data };
+  } else {
+    const rng = makeRng((parseInt($('seed').value) || 0) + 999);
+    const idx = data.map((_, i) => i);
+    for (let i = idx.length - 1; i > 0; i--){
+      const j = Math.floor(rng()*(i+1));
+      const t = idx[i]; idx[i] = idx[j]; idx[j] = t;
+    }
+    const nTrain = Math.max(1, Math.round(data.length * (+$('split').value)/100));
+    state.split = { train: idx.slice(0, nTrain).map(i => data[i]),
+                    test:  idx.slice(nTrain).map(i => data[i]) };
+  }
+  fitNorm();
+  updateSplitInfo();
+}
+
+function fitNorm(){
+  const train = state.split ? state.split.train : [];
+  const n = nIn();
+  if (!$('standardize').checked || !train.length){ state.norm = null; return; }
+  const mean = new Array(n).fill(0), std = new Array(n).fill(0);
+  for (const s of train) for (let i = 0; i < n; i++) mean[i] += s.x[i];
+  for (let i = 0; i < n; i++) mean[i] /= train.length;
+  for (const s of train) for (let i = 0; i < n; i++) std[i] += (s.x[i]-mean[i])*(s.x[i]-mean[i]);
+  for (let i = 0; i < n; i++) std[i] = Math.sqrt(std[i]/train.length) || 1;
+  state.norm = { mean, std };
+}
+function normalize(x){
+  if (!state.norm) return x.slice();
+  return x.map((v, i) => (v - state.norm.mean[i]) / state.norm.std[i]);
+}
+function normSet(set){ return set.map(s => ({ x: normalize(s.x), y: s.y, raw: s.x })); }
+
+function updateSplitInfo(){
+  const parsed = parseData();
+  const sp = state.split || { train: [], test: [] };
+  const el = $('splitInfo');
+  if (el){
+    el.textContent = parsed.data.length + ' usable examples — ' +
+      sp.train.length + ' for practice / ' + sp.test.length + ' for the exam' +
+      ($('splitMode').value === 'same' ? ' (the same rows)' : '');
+  }
+  const m = $('dataMsg');
+  const errors = parsed.errors;
+  if (errors.length){
+    m.className = 'msg err';
+    m.textContent = errors.slice(0,3).join(' · ') +
+                    (errors.length > 3 ? ' · +' + (errors.length-3) + ' more' : '');
+  } else { m.className = 'msg'; m.textContent = ''; }
+}
+
+/* ---- net lifecycle ---- */
+function resetNet(){
+  const rng = makeRng(parseInt($('seed').value) || 1);
+  state.net = makeNet(layerSizes(), $('act').value, rng);
+  state.history = [];
+  state.epoch = 0;
+  state.probe = null;
+  state.sel = null;
+  $('mEpoch').textContent = '0';
+  $('mTrainLoss').textContent = '—';
+  $('mTrainAcc').textContent = '—';
+  $('mTestAcc').textContent = '—';
+  const sz = layerSizes();
+  const params = sz.slice(1).reduce((a, c, i) => a + c*(sz[i]+1), 0);
+  $('archMsg').className = 'msg';
+  $('archMsg').textContent = sz.join(' → ') + '  ·  ' + params + ' numbers to learn';
+  $('predOut').textContent = 'Nothing sent through yet.';
+  drawChart(); drawNet(); renderLayerBar(); renderHiddenCount(); renderInspector(); renderConfusion();
+  renderBoardTable(); renderAnswerLabels();
+}
+/* ============================================================
+   Network diagram
+   ============================================================ */
+const NAME_FONT = '12px ui-monospace,SFMono-Regular,Menlo,monospace';
+
+function maxAbsWeight(net){
+  let m = 1e-6;
+  for (const layer of net.W) for (const row of layer) for (const v of row) m = Math.max(m, Math.abs(v));
+  return m;
+}
+
+function layoutNet(w, h, padL, padR){
+  const net = state.net;
+  const pad = { l: padL || 62, r: padR || 62, t: 38, b: 24 };
+  const cols = net.sizes.length;
+  let widest = 1;
+  for (const s of net.sizes) if (s > widest) widest = s;
+
+  const avail = h - pad.t - pad.b;                                  // vertical room for neurons
+  const colGap = cols > 1 ? (w - pad.l - pad.r)/(cols-1) : w;       // horizontal room per layer
+  // Circles as big as the spacing allows, so a small net really fills the picture.
+  // Each neuron of the widest layer gets a slot of avail/widest; the circle takes 42% of it,
+  // which both keeps 2r inside the slot and leaves a visible gap between neighbours.
+  const r = Math.max(5, Math.min(34, colGap*0.30, (avail/widest)*0.42));
+  // Spread the centres over what is left after reserving the top and bottom radius.
+  const gap = widest === 1 ? 0 : Math.min((avail - 2*r)/(widest-1), r*3);
+  const midY = pad.t + avail/2;
+
+  const nodes = [];
+  for (let l = 0; l < cols; l++){
+    const x = cols === 1 ? w/2 : pad.l + l*(w-pad.l-pad.r)/(cols-1);
+    const cnt = net.sizes[l];
+    const y0 = midY - gap*(cnt-1)/2;
+    const col = [];
+    for (let i = 0; i < cnt; i++) col.push({ x: x, y: y0 + i*gap, l: l, i: i });
+    nodes.push(col);
+  }
+  return { nodes: nodes, r: r, pad: pad };
+}
+
+function drawNet(){
+  const c = fitCanvas($('netView'));
+  const ctx = c.ctx, w = c.w, h = c.h;
+  const net = state.net;
+  if (!net) return;
+  // Input and answer names are drawn outside their circles, so they need margin - but the
+  // margin changes the radius, so lay out once to get r, then again with the real margins.
+  ctx.font = NAME_FONT;
+  let inW = 0, outW = 0;
+  for (let i = 0; i < net.sizes[0]; i++) inW = Math.max(inW, ctx.measureText(neuronName(0, i)).width);
+  for (let i = 0; i < net.sizes[net.L]; i++) outW = Math.max(outW, ctx.measureText(neuronName(net.L, i)).width);
+  const first = layoutNet(w, h);
+  const cap = w*0.30;
+  const g = layoutNet(w, h,
+    Math.min(cap, Math.max(62, first.r + inW + 16)),
+    Math.min(cap, Math.max(62, first.r + outW + 16)));
+  state.geom = g;
+  positionLayerBar();
+  const maxW = maxAbsWeight(net);
+  const sel = state.sel;
+
+  // --- connections ---
+  for (let l = 0; l < net.L; l++){
+    for (let i = 0; i < net.W[l].length; i++){
+      for (let j = 0; j < net.W[l][i].length; j++){
+        const a = g.nodes[l][j], b = g.nodes[l+1][i];
+        const wv = net.W[l][i][j];
+        const mag = Math.abs(wv)/maxW;
+        const isSel = sel && sel.kind === 'edge' && sel.l === l && sel.i === i && sel.j === j;
+        ctx.beginPath();
+        ctx.moveTo(a.x + g.r, a.y);
+        ctx.lineTo(b.x - g.r, b.y);
+        ctx.lineWidth = isSel ? 4 : Math.max(0.4, mag*3.2);
+        ctx.strokeStyle = isSel ? '#111827'
+          : (wv >= 0 ? 'rgba(37,99,235,' : 'rgba(220,38,38,') + (0.12 + 0.78*mag) + ')';
+        ctx.stroke();
+      }
+    }
+  }
+
+  // --- neurons ---
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  for (let l = 0; l < g.nodes.length; l++){
+    let layerMax = 1e-6;
+    if (state.probe) for (const v of state.probe.as[l]) layerMax = Math.max(layerMax, Math.abs(v));
+    for (const nd of g.nodes[l]){
+      const isSel = sel && sel.kind === 'node' && sel.l === l && sel.i === nd.i;
+      let fill = '#ffffff';
+      if (state.probe){
+        // Shade by activation: blue positive, red negative, near-white at zero.
+        const a = state.probe.as[l][nd.i];
+        const t = Math.min(1, Math.abs(a)/layerMax);
+        fill = (a >= 0 ? 'rgba(37,99,235,' : 'rgba(220,38,38,') + (0.08 + 0.62*t) + ')';
+      }
+      ctx.beginPath();
+      ctx.arc(nd.x, nd.y, g.r, 0, Math.PI*2);
+      ctx.fillStyle = fill; ctx.fill();
+      ctx.lineWidth = isSel ? 3 : 1.2;
+      ctx.strokeStyle = isSel ? '#111827' : '#6b7280';
+      ctx.stroke();
+      const mono = 'px ui-monospace,SFMono-Regular,Menlo,monospace';
+      const name = neuronName(l, nd.i);
+      // For an input circle show the number the user actually typed, not the scaled one.
+      const val = state.probe ? (l === 0 ? state.probe.x[nd.i] : state.probe.as[l][nd.i]) : null;
+      ctx.fillStyle = '#111827';
+      if (l === 0 || l === net.L){
+        ctx.font = NAME_FONT;
+        ctx.textAlign = l === 0 ? 'right' : 'left';
+        ctx.fillText(name, l === 0 ? nd.x - g.r - 8 : nd.x + g.r + 8, nd.y);
+        ctx.textAlign = 'center';
+        if (val !== null && g.r >= 12){
+          ctx.font = Math.round(Math.min(15, g.r*0.55)) + mono;
+          ctx.fillText(val.toFixed(2), nd.x, nd.y);
+        }
+      } else if (val !== null && g.r >= 15){
+        ctx.font = Math.round(g.r*0.58) + mono;
+        ctx.fillText(name, nd.x, nd.y - g.r*0.30);
+        ctx.font = Math.round(g.r*0.50) + mono;
+        ctx.fillText(val.toFixed(2), nd.x, nd.y + g.r*0.38);
+      } else if (g.r >= 10){
+        ctx.font = Math.round(Math.min(16, g.r*0.8)) + mono;
+        ctx.fillText(val !== null ? val.toFixed(2) : name, nd.x, nd.y);
+      }
+    }
+  }
+
+  // --- layer captions ---
+  ctx.font = '12px system-ui';
+  ctx.fillStyle = '#5f6875';
+  for (let l = 0; l < g.nodes.length; l++){
+    const x = g.nodes[l][0].x;
+    const name = l === 0 ? 'inputs'
+               : (l === net.L ? 'answers' : 'hidden ' + l);
+    ctx.fillText(name + ' (' + net.sizes[l] + ')', x, 16);
+  }
+  ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+}
+
+/* Hit-test: neurons win over connections. */
+function pickAt(mx, my){
+  const g = state.geom, net = state.net;
+  if (!g || !net) return null;
+  for (let l = 0; l < g.nodes.length; l++){
+    for (const nd of g.nodes[l]){
+      const dx = mx-nd.x, dy = my-nd.y;
+      if (dx*dx + dy*dy <= (g.r+4)*(g.r+4)) return { kind:'node', l: l, i: nd.i };
+    }
+  }
+  let best = null, bestD = 6;
+  for (let l = 0; l < net.L; l++){
+    for (let i = 0; i < net.W[l].length; i++){
+      for (let j = 0; j < net.W[l][i].length; j++){
+        const a = g.nodes[l][j], b = g.nodes[l+1][i];
+        const d = distToSeg(mx, my, a.x, a.y, b.x, b.y);
+        if (d < bestD){ bestD = d; best = { kind:'edge', l: l, i: i, j: j }; }
+      }
+    }
+  }
+  return best;
+}
+function distToSeg(px, py, x1, y1, x2, y2){
+  const dx = x2-x1, dy = y2-y1;
+  const len2 = dx*dx + dy*dy || 1;
+  let t = ((px-x1)*dx + (py-y1)*dy)/len2;
+  t = Math.max(0, Math.min(1, t));
+  const cx = x1 + t*dx, cy = y1 + t*dy;
+  return Math.sqrt((px-cx)*(px-cx) + (py-cy)*(py-cy));
+}
+
+/* ============================================================
+   Inspector - read and edit individual parameters
+   ============================================================ */
+function renderInspector(){
+  const box = $('inspector');
+  const net = state.net, sel = state.sel;
+  if (!net){ box.innerHTML = '<p class="sub">No network.</p>'; return; }
+
+  if (!sel){
+    let sum = 0, cnt = 0;
+    for (const L of net.W) for (const r of L) for (const v of r){ sum += Math.abs(v); cnt++; }
+    box.innerHTML =
+      '<h3>Nothing picked yet</h3>' +
+      '<p class="sub">Click a circle in the picture to see the numbers going into it, or click a ' +
+      'line to see that one number. You can type new values and watch what changes.</p>' +
+      '<div class="kv"><span>layers</span><span>' + net.sizes.join(' → ') + '</span></div>' +
+      '<div class="kv"><span>hidden activation</span><span>' + net.act + '</span></div>' +
+      '<div class="kv"><span>max |w|</span><span>' + maxAbsWeight(net).toFixed(4) + '</span></div>' +
+      '<div class="kv"><span>mean |w|</span><span>' + (cnt ? (sum/cnt).toFixed(4) : '—') + '</span></div>' +
+      '<div class="kv"><span>weights / biases</span><span>' + cnt + ' / ' +
+        net.b.reduce((a, c) => a + c.length, 0) + '</span></div>';
+    return;
+  }
+
+  if (sel.kind === 'edge'){
+    const wv = net.W[sel.l][sel.i][sel.j];
+    box.innerHTML =
+      '<h3>' + neuronName(sel.l, sel.j) + ' &rarr; ' + neuronName(sel.l+1, sel.i) + '</h3>' +
+      '<p class="sub">how strongly ' + neuronName(sel.l, sel.j) + ' pushes on ' +
+      neuronName(sel.l+1, sel.i) + '</p>' +
+      '<table class="wtable"><tr><td class="lab">value</td>' +
+      '<td><input id="wEdit" type="number" step="any" value="' + wv + '"></td></tr></table>' +
+      '<p class="hint">Editing changes the live network — metrics update immediately.</p>';
+    $('wEdit').addEventListener('change', e => {
+      const v = parseFloat(e.target.value);
+      if (isFinite(v)){ net.W[sel.l][sel.i][sel.j] = v; afterEdit(); }
+    });
+    return;
+  }
+
+  // --- node ---
+  const l = sel.l, i = sel.i;
+  const isInput = l === 0, isOutput = l === net.L;
+  const nm = neuronName(l, i);
+  let html = '<h3>' + (isInput ? 'Input' : isOutput ? 'Answer' : 'Hidden neuron') + ' ' + nm + '</h3>';
+  html += '<p class="sub">' +
+    (isInput ? 'column ' + (i+1) + ' of your table' + (state.norm ? ', scaled before it enters the net' : '')
+     : isOutput ? 'how sure it is that the answer is ' + i
+     : 'activation: ' + net.act) + '</p>';
+
+  if (state.probe){
+    if (isInput){
+      html += '<div class="kv"><span>you typed</span><span>' + fmt(state.probe.x[i]) + '</span></div>';
+      if (state.norm){
+        html += '<div class="kv"><span>after scaling</span><span>' + fmt(state.probe.as[0][i]) + '</span></div>';
+        html += '<p class="hint">Scaling subtracts this column\'s average and divides by its spread, ' +
+                'so a typed 0 can become a negative number. Turn it off in Expert settings.</p>';
+      }
+    } else {
+      html += '<div class="kv"><span>before activation (z)</span><span>' + fmt(state.probe.zs[l][i]) + '</span></div>';
+      html += '<div class="kv"><span>after activation (a)</span><span>' + fmt(state.probe.as[l][i]) + '</span></div>';
+    }
+  }
+
+  if (!isInput){
+    html += '<table class="wtable" style="margin-top:8px">' +
+            '<tr><td class="lab">bias</td>' +
+            '<td><input class="pEdit" data-kind="b" type="number" step="any" value="' + net.b[l-1][i] + '"></td></tr>';
+    net.W[l-1][i].forEach((wv, j) => {
+      html += '<tr><td class="lab">from ' + neuronName(l-1, j) + '</td>' +
+              '<td><input class="pEdit" data-kind="w" data-j="' + j +
+              '" type="number" step="any" value="' + wv + '"></td></tr>';
+    });
+    html += '</table>';
+  }
+
+  if (!isOutput){
+    html += '<p class="sub" style="margin:10px 0 4px">outgoing weights</p><table class="wtable">';
+    net.W[l].forEach((row, k) => {
+      html += '<tr><td class="lab">to ' + neuronName(l+1, k) + '</td>' +
+              '<td><input class="oEdit" data-k="' + k +
+              '" type="number" step="any" value="' + row[i] + '"></td></tr>';
+    });
+    html += '</table>';
+  }
+  box.innerHTML = html;
+
+  box.querySelectorAll('.pEdit').forEach(inp => inp.addEventListener('change', e => {
+    const v = parseFloat(e.target.value);
+    if (!isFinite(v)) return;
+    if (e.target.dataset.kind === 'b') net.b[l-1][i] = v;
+    else net.W[l-1][i][+e.target.dataset.j] = v;
+    afterEdit();
+  }));
+  box.querySelectorAll('.oEdit').forEach(inp => inp.addEventListener('change', e => {
+    const v = parseFloat(e.target.value);
+    if (isFinite(v)){ net.W[l][+e.target.dataset.k][i] = v; afterEdit(); }
+  }));
+}
+
+/* Recompute everything after a hand-edited parameter. */
+function afterEdit(){
+  if (state.split){
+    const tr = evaluate(state.net, normSet(state.split.train));
+    const te = evaluate(state.net, normSet(state.split.test));
+    state.history.push({ epoch: state.epoch, trainLoss: tr.loss, trainAcc: tr.acc, testAcc: te.acc });
+    updateMetrics(); drawChart(); renderConfusion();
+  }
+  refreshProbe();
+  drawNet();
+}
+
+/* ============================================================
+   Confusion matrix
+   ============================================================ */
+function renderConfusion(){
+  const box = $('confusion');
+  const test = state.split ? normSet(state.split.test) : [];
+  if (!state.net || !test.length){
+    box.innerHTML = '<p class="hint">Train the network to see the confusion matrix.</p>'; return;
+  }
+  const k = nOut();
+  const m = [];
+  for (let i = 0; i < k; i++) m.push(new Array(k).fill(0));
+  for (const s of test) m[s.y][argmax(predict(state.net, s.x))]++;
+  let html = '<table><thead><tr><th>actual \\ predicted</th>';
+  for (let j = 0; j < k; j++) html += '<th>' + j + '</th>';
+  html += '</tr></thead><tbody>';
+  for (let i = 0; i < k; i++){
+    html += '<tr><th>' + i + '</th>';
+    for (let j = 0; j < k; j++){
+      const v = m[i][j];
+      const bg = v === 0 ? 'transparent' : (i === j ? 'rgba(21,128,61,.14)' : 'rgba(185,28,28,.14)');
+      html += '<td style="text-align:center;padding:5px 8px;background:' + bg + '">' + v + '</td>';
+    }
+    html += '</tr>';
+  }
+  box.innerHTML = html + '</tbody></table>';
+}
+
+/* ============================================================
+   Example datasets
+   ============================================================ */
+function loadPreset(name){
+  const rng = makeRng(7);
+  const rows = [];
+  const push = (x, y) => rows.push(x.map(v => (Math.round(v*1000)/1000).toString()).concat([String(y)]));
+  if (name === 'xor'){
+    state.nIn = 2; state.nOut = 2;
+    push([0,0],0); push([0,1],1); push([1,0],1); push([1,1],0);
+    for (let i = 0; i < 60; i++){
+      const a = rng() < .5 ? 0 : 1, b = rng() < .5 ? 0 : 1;
+      push([a + (rng()-.5)*0.4, b + (rng()-.5)*0.4], a ^ b);
+    }
+  } else if (name === 'circle'){
+    state.nIn = 2; state.nOut = 2;
+    for (let i = 0; i < 120; i++){
+      const inner = i % 2 === 0;
+      const r = inner ? rng()*0.9 : 1.7 + rng()*0.9;
+      const t = rng()*Math.PI*2;
+      push([r*Math.cos(t), r*Math.sin(t)], inner ? 0 : 1);
+    }
+  } else if (name === 'blobs3'){
+    state.nIn = 2; state.nOut = 3;
+    const g = makeGauss(rng);
+    const centers = [[-2,-1],[2,-1],[0,2.2]];
+    for (let i = 0; i < 120; i++){
+      const c = i % 3;
+      push([centers[c][0] + g()*0.6, centers[c][1] + g()*0.6], c);
+    }
+  } else if (name === 'spiral'){
+    state.nIn = 2; state.nOut = 2;
+    for (let c = 0; c < 2; c++){
+      for (let i = 0; i < 70; i++){
+        const r = i/70*3.2;
+        const t = c*Math.PI + i/70*3.4 + (rng()-.5)*0.25;
+        push([r*Math.sin(t), r*Math.cos(t)], c);
+      }
+    }
+  }
+  state.rows = rows;
+  state.colNames = [];
+  renderTable(); renderPredictInputs(); resplit(); resetNet();
+}
+
+
+/* ============================================================
+   Training loop (chunked so the page stays responsive)
+   ============================================================ */
+let rafId = null;
+function startTraining(){
+  const parsed = parseData();
+  const msg = $('trainMsg');
+  if (!parsed.data.length){ msg.className='msg err'; msg.textContent='There are no usable rows yet.'; return; }
+  if (parsed.errors.length){ msg.className='msg err'; msg.textContent='Fix the red notes under the table first.'; return; }
+  resplit();
+  if (!state.split.train.length){ msg.className='msg err'; msg.textContent='There are no practice rows.'; return; }
+  if (!state.net || state.net.sizes.join() !== layerSizes().join() || state.net.act !== $('act').value) resetNet();
+
+  const train = normSet(state.split.train);
+  const test  = normSet(state.split.test);
+  const lr = parseFloat($('lr').value) || 0.01;
+  const batch = Math.max(0, parseInt($('batch').value) || 0);
+  const totalEpochs = Math.max(1, parseInt($('epochs').value) || 1);
+  const rng = makeRng((parseInt($('seed').value) || 1) + state.epoch + 7);
+  const every = Math.max(1, Math.floor(totalEpochs/200));
+
+  state.running = true;
+  msg.className = 'msg'; msg.textContent = 'Practising…';
+  let done = 0;
+
+  function chunk(){
+    if (!state.running){ finish('Stopped after ' + state.epoch + ' rounds.'); return; }
+    const t0 = performance.now();
+    while (done < totalEpochs && performance.now() - t0 < 24){
+      trainEpoch(state.net, train, lr, batch, rng);
+      state.epoch++; done++;
+      if (done % every === 0 || done === totalEpochs){
+        const tr = evaluate(state.net, train), te = evaluate(state.net, test);
+        state.history.push({ epoch: state.epoch, trainLoss: tr.loss, trainAcc: tr.acc, testAcc: te.acc });
+      }
+    }
+    updateMetrics(); drawChart(); drawNet();
+    if (done < totalEpochs) rafId = requestAnimationFrame(chunk);
+    else finish('Done — ' + totalEpochs + ' rounds of practice.');
+  }
+  function finish(text){
+    state.running = false;
+    refreshProbe();
+    drawNet(); renderInspector(); renderConfusion(); updateMetrics();
+    msg.className = 'msg ok'; msg.textContent = text;
+  }
+  rafId = requestAnimationFrame(chunk);
+}
+
+function updateMetrics(){
+  $('mEpoch').textContent = state.epoch;
+  const h = state.history[state.history.length-1];
+  if (!h) return;
+  const pct = v => isFinite(v) ? (v*100).toFixed(1) + '%' : '—';
+  $('mTrainLoss').textContent = h.trainLoss.toFixed(4);
+  $('mTrainAcc').textContent = pct(h.trainAcc);
+  $('mTestAcc').textContent = pct(h.testAcc);
+}
+
+/* ============================================================
+   Loss / accuracy chart
+   ============================================================ */
+function fitCanvas(cv){
+  const dpr = window.devicePixelRatio || 1;
+  const w = cv.clientWidth, h = cv.clientHeight || 260;
+  if (cv.width !== Math.round(w*dpr) || cv.height !== Math.round(h*dpr)){
+    cv.width = Math.round(w*dpr); cv.height = Math.round(h*dpr);
+  }
+  const ctx = cv.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  return { ctx: ctx, w: w, h: h };
+}
+
+function drawChart(){
+  const cv = $('lossChart');
+  // The results panel is collapsed by default; a hidden canvas has zero width,
+  // so skip drawing and redraw when it is opened.
+  if (!cv.clientWidth) return;
+  const c = fitCanvas(cv);
+  const ctx = c.ctx, w = c.w, h = c.h;
+  const pad = { l: 46, r: 46, t: 14, b: 26 };
+  const H = state.history;
+  ctx.strokeStyle = '#c9ced7'; ctx.lineWidth = 1;
+  ctx.strokeRect(pad.l, pad.t, w-pad.l-pad.r, h-pad.t-pad.b);
+  ctx.fillStyle = '#5f6875'; ctx.font = '11px system-ui';
+  if (!H.length){ ctx.fillText('Train the brain to see the curves', pad.l+10, pad.t+20); return; }
+
+  let maxLoss = 0.0001;
+  for (const p of H) if (p.trainLoss > maxLoss) maxLoss = p.trainLoss;
+  const xs = e => pad.l + (e/Math.max(1, state.epoch)) * (w-pad.l-pad.r);
+  const yLoss = v => pad.t + (1 - v/maxLoss) * (h-pad.t-pad.b);
+  const yAcc  = v => pad.t + (1 - v) * (h-pad.t-pad.b);
+
+  const line = (key, color, ymap, dash) => {
+    ctx.beginPath(); ctx.strokeStyle = color; ctx.lineWidth = 1.9;
+    ctx.setLineDash(dash || []);
+    let started = false;
+    for (const p of H){
+      const v = p[key];
+      if (!isFinite(v)) continue;
+      const X = xs(p.epoch), Y = ymap(v);
+      if (!started){ ctx.moveTo(X, Y); started = true; } else ctx.lineTo(X, Y);
+    }
+    ctx.stroke(); ctx.setLineDash([]);
+  };
+  line('testAcc',   '#d97706', yAcc, [4,3]);
+  line('trainAcc',  '#1c8a4d', yAcc);
+  line('trainLoss', '#2f6fed', yLoss);
+
+  ctx.fillStyle = '#5f6875';
+  ctx.fillText(maxLoss.toFixed(2), 6, pad.t+10);
+  ctx.fillText('0', 6, h-pad.b);
+  ctx.textAlign = 'right';
+  ctx.fillText('100%', w-6, pad.t+10);
+  ctx.fillText('0%', w-6, h-pad.b);
+  ctx.textAlign = 'center';
+  ctx.fillText('round ' + state.epoch, (pad.l + w - pad.r)/2, h-8);
+  ctx.textAlign = 'left';
+}
+
+/* ============================================================
+   Probe / predict
+   ============================================================ */
+function renderPredictInputs(){
+  const box = $('predInputs');
+  box.innerHTML = '';
+  for (let i = 0; i < nIn(); i++){
+    const row = document.createElement('div');
+    row.className = 'tryrow';
+    row.innerHTML = '<label>' + esc(colName(i)) + '</label>' +
+                    '<input type="number" step="any" class="predIn" value="0">';
+    box.appendChild(row);
+  }
+}
+function doPredict(){
+  if (!state.net){ $('predOut').textContent = 'No brain yet.'; return; }
+  const x = Array.prototype.map.call(document.querySelectorAll('.predIn'), i => parseFloat(i.value) || 0);
+  const fp = forward(state.net, normalize(x));
+  state.probe = { x: x, zs: fp.zs, as: fp.as };
+  const p = fp.as[state.net.L];
+  const c = argmax(p);
+  let html = '<div class="big">It says: answer ' + c + '</div>' +
+             '<div class="prob">how sure it is:</div>';
+  p.forEach((v, i) => {
+    html += '<div class="prob">' + i + ' — ' + (v*100).toFixed(1) + '%' +
+            '<div class="bar"><i style="width:' + (v*100).toFixed(1) + '%"></i></div></div>';
+  });
+  $('predOut').innerHTML = html;
+  drawNet(); renderInspector();
+}
+function refreshProbe(){
+  if (!state.probe || !state.net) return;
+  if (state.probe.x.length !== state.net.sizes[0]){ state.probe = null; return; }
+  const fp = forward(state.net, normalize(state.probe.x));
+  state.probe.zs = fp.zs; state.probe.as = fp.as;
+}
+
+/* Recompute everything after a hand-edited parameter. */
+function afterEdit(){
+  if (state.split){
+    const tr = evaluate(state.net, normSet(state.split.train));
+    const te = evaluate(state.net, normSet(state.split.test));
+    state.history.push({ epoch: state.epoch, trainLoss: tr.loss, trainAcc: tr.acc, testAcc: te.acc });
+    updateMetrics(); drawChart(); renderConfusion();
+  }
+  refreshProbe();
+  drawNet();
+}
+
+/* ============================================================
+   Paste data
+   ============================================================ */
+function loadPastedRows(txt){
+  const lines = String(txt).split(/\r?\n/).map(l => l.trim()).filter(l => l.length);
+  if (!lines.length) return 'Nothing to load — the box is empty.';
+  let rows = lines.map(l => l.split(/[\s,;]+/).filter(c => c.length));
+
+  let header = null;
+  if (rows.length > 1 && rows[0].some(c => !isFinite(parseFloat(c)))){ header = rows[0]; rows = rows.slice(1); }
+  if (!rows.length) return 'Only a heading line found — add some data rows.';
+
+  const cols = rows[0].length;
+  if (cols < 2) return 'Each line needs at least one input and one answer, e.g. "1.5, 0".';
+  const bad = rows.findIndex(r => r.length !== cols);
+  if (bad >= 0) return 'Line ' + (bad+1) + ' has ' + rows[bad].length + ' values but the first line has ' + cols + '.';
+  if (cols - 1 > MAX_IN) return 'That is ' + (cols-1) + ' inputs per line; this page handles at most ' + MAX_IN + '.';
+
+  let maxLabel = 0;
+  for (const r of rows) maxLabel = Math.max(maxLabel, parseInt(r[r.length-1]) || 0);
+  if (maxLabel > MAX_OUT - 1) return 'The biggest answer found is ' + maxLabel + '; answers must be 0 to ' + (MAX_OUT-1) + '.';
+  state.nIn = cols - 1;
+  state.nOut = Math.max(2, maxLabel + 1);
+  state.colNames = header ? header.slice(0, cols-1) : [];
+  state.rows = rows;
+  renderTable(); renderPredictInputs(); resplit(); resetNet();
+  return null;
+}
+
+/* ============================================================
+   Wiring
+   ============================================================ */
+$('act').addEventListener('change', resetNet);
+$('seed').addEventListener('input', () => { resplit(); resetNet(); });
+$('standardize').addEventListener('change', () => { fitNorm(); refreshProbe(); drawNet(); });
+$('splitMode').addEventListener('change', () => {
+  $('splitRow').style.display = $('splitMode').value === 'same' ? 'none' : 'block';
+  resplit();
+});
+$('split').addEventListener('input', () => { $('splitVal').textContent = $('split').value + '%'; resplit(); });
+
+$('btnTrain').addEventListener('click', startTraining);
+$('btnStop').addEventListener('click', () => { state.running = false; if (rafId) cancelAnimationFrame(rafId); });
+$('btnReset').addEventListener('click', () => { state.running = false; resetNet(); $('trainMsg').textContent = ''; });
+$('btnAddRow').addEventListener('click', () => { addRows(1); resplit(); });
+$('btnAddRows').addEventListener('click', () => { addRows(5); resplit(); });
+$('btnClear').addEventListener('click', () => { state.rows = []; addRows(4); resplit(); });
+$('preset').addEventListener('change', e => { if (e.target.value){ loadPreset(e.target.value); e.target.value = ''; } });
+
+function closeCsv(){ $('csvModal').classList.remove('open'); }
+$('btnCsv').addEventListener('click', () => {
+  $('csvMsg').textContent = '';
+  $('csvModal').classList.add('open');
+  $('csvText').focus();
+});
+$('csvCancel').addEventListener('click', closeCsv);
+$('csvModal').addEventListener('click', e => { if (e.target === $('csvModal')) closeCsv(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape'){ closeCsv(); closeSn(); } });
+$('csvLoad').addEventListener('click', () => {
+  const err = loadPastedRows($('csvText').value);
+  if (err){ $('csvMsg').className = 'msg err'; $('csvMsg').textContent = err; }
+  else closeCsv();
+});
+$('btnPredict').addEventListener('click', doPredict);
+$('btnClearProbe').addEventListener('click', () => {
+  state.probe = null; $('predOut').textContent = 'Nothing sent through yet.'; drawNet(); renderInspector();
+});
+
+$('netView').addEventListener('click', e => {
+  const r = e.currentTarget.getBoundingClientRect();
+  state.sel = pickAt(e.clientX - r.left, e.clientY - r.top);
+  drawNet(); renderInspector();
+});
+$('netView').addEventListener('mousemove', e => {
+  const r = e.currentTarget.getBoundingClientRect();
+  e.currentTarget.style.cursor = pickAt(e.clientX - r.left, e.clientY - r.top) ? 'pointer' : 'default';
+});
+
+/* The chart canvas has no width while the panel is collapsed, so draw on open. */
+$('resultsPanel').addEventListener('toggle', () => { if ($('resultsPanel').open) drawChart(); });
+
+/* ---- Export of every bias and weight ----
+   One row per neuron: [bias, w0, w1, ...] */
+function exportRows(net){
+  const rows = [];
+  for (let l = 0; l < net.L; l++){
+    for (let i = 0; i < net.W[l].length; i++){
+      rows.push([net.b[l][i]].concat(net.W[l][i]));
+    }
+  }
+  return rows;
+}
+function exportCsv(net){
+  const rows = exportRows(net).map(r => '[' + r.join(',') + ']');
+  return '[' + rows.join(',\n') + ']\n';
+}
+$('btnExportCsv').addEventListener('click', () => {
+  if (!state.net) return;
+  const url = URL.createObjectURL(new Blob([exportCsv(state.net)], { type: 'text/csv' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'brain-' + state.net.sizes.join('-') + '-round' + state.epoch + '.csv';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+});
+
+window.addEventListener('resize', () => { drawChart(); drawNet(); positionLayerBar(); });
+
+
+/* ============================================================
+   Which physical Calliope plays which neuron
+   ------------------------------------------------------------
+   Kept as TEXT, never as a number: a Calliope serial is a signed 32-bit int
+   (so it may be negative) with 9-10 digits, and a float cannot hold that
+   exactly -- a number would arrive rounded and never match the board.
+   Saved in the browser so the table survives a reload.
+   ============================================================ */
+/* ============================================================
+   What each answer means
+   ------------------------------------------------------------
+   Shown on the Calliope's screen when that answer wins. Stored in the browser
+   so the names survive a reload; an empty name falls back to "Antwort <i>".
+   ============================================================ */
+const ANSWER_STORE = 'cmnn.answerLabels';
+let answerLabels = {};          // { "0": "frech", "1": "nicht frech" }
+
+function loadAnswerLabels(){
+  try {
+    const raw = localStorage.getItem(ANSWER_STORE);
+    if (raw) answerLabels = JSON.parse(raw) || {};
+  } catch (e){ answerLabels = {}; }
+}
+function saveAnswerLabels(){
+  try { localStorage.setItem(ANSWER_STORE, JSON.stringify(answerLabels)); } catch (e){}
+}
+function answerLabel(i){
+  const v = answerLabels[String(i)];
+  return (v && v.trim()) ? v.trim() : 'Antwort ' + i;
+}
+function renderAnswerLabels(){
+  const box = $('answerLabels');
+  if (!box || !state.net) return;
+  const k = state.net.sizes[state.net.L];
+  let html = '<table><thead><tr><th style="width:110px">answer</th>' +
+             '<th>what it means</th></tr></thead><tbody>';
+  for (let i = 0; i < k; i++){
+    html += '<tr><th style="text-align:left">y' + i + ' (answer ' + i + ')</th>' +
+            '<td><input class="aLabel" data-i="' + i + '" placeholder="Antwort ' + i + '" value="' +
+            esc(answerLabels[String(i)] || '') + '"></td></tr>';
+  }
+  box.innerHTML = html + '</tbody></table>';
+  box.querySelectorAll('input.aLabel').forEach(inp => {
+    inp.addEventListener('input', () => {
+      answerLabels[inp.dataset.i] = inp.value;
+      saveAnswerLabels();
+    });
+  });
+}
+
+/* Read a pasted block of board numbers. Two accepted shapes, mixable:
+     -1394225184            positional: the Nth non-blank line is the Nth role
+     h0 = -1394225184       named: order does not matter
+   Returns an error string, or null on success. */
+function loadPastedSerials(txt){
+  const roles = boardRoles();
+  if (!roles.length) return 'There is no network yet.';
+  const lines = String(txt).split(/\r?\n/).map(l => l.trim()).filter(l => l.length);
+  if (!lines.length) return 'Nothing to read — the box is empty.';
+
+  const named = [], positional = [];
+  for (const line of lines){
+    const m = line.match(/^([a-zA-Z]+[0-9]+)\s*[=:]\s*(-?[0-9]+)$/);
+    if (m) named.push({ key: m[1].toLowerCase(), sn: m[2] });
+    else if (/^-?[0-9]+$/.test(line)) positional.push(line);
+    else return 'Cannot read this line: "' + line + '"';
+  }
+  if (positional.length > roles.length){
+    return 'That is ' + positional.length + ' numbers but this network has only ' +
+           roles.length + ' boards.';
+  }
+  for (const n of named){
+    if (!roles.some(r => r.key === n.key)) return 'This network has no board called "' + n.key + '".';
+  }
+
+  // Positional entries fill the table top to bottom; named ones override.
+  positional.forEach((sn, i) => { boardSerials[roles[i].key] = sn; });
+  named.forEach(n => { boardSerials[n.key] = n.sn; });
+  saveBoardSerials();
+  renderBoardTable();
+  return null;
+}
+
+const BOARD_STORE = 'cmnn.boardSerials';
+let boardSerials = {};          // { "h0": "-1394225184", "x0": "...", ... }
+
+function loadBoardSerials(){
+  try {
+    const raw = localStorage.getItem(BOARD_STORE);
+    if (raw) boardSerials = JSON.parse(raw) || {};
+  } catch (e){ boardSerials = {}; }
+}
+function saveBoardSerials(){
+  try { localStorage.setItem(BOARD_STORE, JSON.stringify(boardSerials)); } catch (e){}
+}
+
+/* Every role the current network needs: one per hidden neuron, one per answer,
+   one per input. Hidden neurons are numbered across all hidden layers, matching
+   the sender's ARCH handler. */
+function boardRoles(){
+  if (!state.net) return [];
+  const sz = state.net.sizes, L = state.net.L;
+  const roles = [];
+  for (let i = 0; i < sz[0]; i++) roles.push({ key: 'x' + i, kind: 'x', idx: i, label: 'Input ' + colName(i) });
+  let hn = 0;
+  for (let l = 1; l <= L-1; l++){
+    for (let i = 0; i < sz[l]; i++){ roles.push({ key: 'h' + hn, kind: 'n', idx: hn, label: 'Hidden h' + hn }); hn++; }
+  }
+  for (let i = 0; i < sz[L]; i++) roles.push({ key: 'y' + i, kind: 'n', idx: hn + i, label: 'Answer y' + i });
+  return roles;
+}
+
+function renderBoardTable(){
+  const box = $('boardTable');
+  if (!box) return;
+  const roles = boardRoles();
+  let html = '<table><thead><tr><th style="width:150px">neuron</th>' +
+             '<th>this Calliope\'s number</th></tr></thead><tbody>';
+  for (const r of roles){
+    html += '<tr><th style="text-align:left">' + esc(r.label) + '</th>' +
+            '<td><input class="bSerial" data-key="' + r.key + '" placeholder="e.g. -1394225184" value="' +
+            esc(boardSerials[r.key] || '') + '"></td></tr>';
+  }
+  box.innerHTML = html + '</tbody></table>';
+  box.querySelectorAll('input.bSerial').forEach(inp => {
+    inp.addEventListener('input', () => {
+      boardSerials[inp.dataset.key] = inp.value.trim();
+      saveBoardSerials();
+    });
+  });
+}
+
+/* ============================================================
+   WebUSB bridge to the sender board
+   ------------------------------------------------------------
+   The Calliope/micro:bit exposes its serial port through the DAPLink debug
+   interface, so we talk CMSIS-DAP over WebUSB rather than opening a COM port:
+     - claim the vendor interface (class 0xFF) and find its bulk in/out pipes,
+     - DAP command 0x80 reports the vendor name (used here as a liveness check),
+     - 0x88 reads whatever the board has written to serial,
+     - 0x89 writes a chunk to the board's serial input.
+   Commands are newline-terminated text; the board answers "OK ..." or "ERR ..."
+   (see section 6 of sender.ts), and we wait for that answer rather than
+   guessing at timing.
+   ============================================================ */
+const usb = {
+  device: null,
+  iface: null,
+  epIn: 0,
+  epOut: 0,
+  rx: '',            // serial text received but not yet split into lines
+  waiters: []        // resolvers waiting for the next complete line
+};
+
+function usbLog(text){
+  const el = $('usbLog');
+  el.textContent += text + '\n';
+  el.scrollTop = el.scrollHeight;
+}
+function usbSay(text, kind){
+  const el = $('usbMsg');
+  el.className = 'msg' + (kind ? ' ' + kind : '');
+  el.textContent = text;
+}
+function usbButtons(connected){
+  $('btnUsbConnect').disabled = connected;
+  $('btnUsbSend').disabled = !connected;
+  $('btnUsbCalc').disabled = !connected;
+  $('btnUsbDisconnect').disabled = !connected;
+}
+
+/* DAPLink vendor commands for serial access. Taken from dapjs
+   (src/daplink/enums.ts) -- an earlier guess of 0x88/0x89 was wrong, those are
+   flash commands, and the board simply never answered. */
+const DAP_READ_SETTINGS  = 0x81;
+const DAP_WRITE_SETTINGS = 0x82;
+const DAP_SERIAL_READ    = 0x83;
+const DAP_SERIAL_WRITE   = 0x84;
+
+/* Send one raw DAP packet and return the reply. */
+async function dap(cmd, payload){
+  const out = new Uint8Array(64);
+  out[0] = cmd;
+  if (payload) out.set(payload, 1);
+  await usb.device.transferOut(usb.epOut, out);
+  const res = await usb.device.transferIn(usb.epIn, 64);
+  return new Uint8Array(res.data.buffer);
+}
+
+/* The board's serial port has its own baud rate, independent of USB, and it
+   must match what the MakeCode program uses (115200). Without this the board
+   is listening at a different speed and nothing it receives makes sense --
+   which is why PING got no reply. */
+async function dapSetBaud(rate){
+  const payload = new Uint8Array(4);
+  new DataView(payload.buffer).setUint32(0, rate, true);   // little-endian
+  await dap(DAP_WRITE_SETTINGS, payload);
+}
+
+/* A reply to one of our commands, as opposed to one of the board's own log
+   lines ("sender ready …", "sent h0 (2 weights)", "out_y0:…"). Only these may
+   satisfy a waiter -- otherwise the startup banner is mistaken for a reply,
+   which is exactly what happened: PING "answered" with "…eady -- A = send…". */
+function isReply(line){
+  return line.indexOf('OK ') === 0 || line === 'OK' ||
+         line.indexOf('ERR ') === 0 || line === 'ERR';
+}
+
+/* Pull any waiting serial bytes off the board and hand complete REPLY lines to
+   whoever is waiting. Reply is [0x83, count, ...bytes]. */
+async function usbPoll(){
+  const r = await dap(DAP_SERIAL_READ);
+  // [0] echoes the command, [1] is how many bytes follow.
+  if (r[0] !== DAP_SERIAL_READ) return;
+  const n = r[1];
+  if (n > 0){
+    let s = '';
+    for (let i = 0; i < n; i++) s += String.fromCharCode(r[2+i]);
+    usb.rx += s;
+    let nl;
+    while ((nl = usb.rx.indexOf('\n')) >= 0){
+      const line = usb.rx.slice(0, nl).replace(/\r$/, '');
+      usb.rx = usb.rx.slice(nl+1);
+      if (!line.length) continue;
+      if (isReply(line)){
+        const w = usb.waiters.shift();
+        if (w) w(line); else usbLog('  < ' + line);
+      } else {
+        usbLog('  · ' + line);          // the board talking to itself
+      }
+    }
+  }
+}
+
+/* Write one command line and wait for the board's reply line. */
+async function usbSend(line, timeoutMs){
+  const text = line + '\n';
+  const bytes = [];
+  for (let i = 0; i < text.length; i++) bytes.push(text.charCodeAt(i) & 0x7f);
+  // [0x84, count, ...bytes], and the packet is 64 bytes including the command
+  // and the count, so at most 62 characters go in one write.
+  for (let off = 0; off < bytes.length; off += 62){
+    const part = bytes.slice(off, off+62);
+    const payload = new Uint8Array(1 + part.length);
+    payload[0] = part.length;
+    payload.set(part, 1);
+    await dap(DAP_SERIAL_WRITE, payload);
+  }
+  usbLog('> ' + line);
+
+  const deadline = Date.now() + (timeoutMs || 4000);
+  return new Promise((resolve, reject) => {
+    // Track OUR waiter by identity. Testing "is the queue empty" resolved this
+    // promise whenever ANY waiter was satisfied, so a late reply to an earlier
+    // command could stand in for this one.
+    let done = false;
+    const mine = v => { done = true; resolve(v); };
+    usb.waiters.push(mine);
+    (async function spin(){
+      while (Date.now() < deadline){
+        await usbPoll();
+        if (done) return;
+        await new Promise(r => setTimeout(r, 12));
+      }
+      const i = usb.waiters.indexOf(mine);
+      if (i >= 0) usb.waiters.splice(i, 1);
+      reject(new Error('no reply to "' + line + '"'));
+    })();
+  }).then(reply => { usbLog('  < ' + reply); return reply; });
+}
+
+async function usbConnect(){
+  if (!navigator.usb){
+    usbSay('This browser cannot do WebUSB. Use Chrome, Edge or Opera (not Firefox or Safari).', 'err');
+    return;
+  }
+  try {
+    usbSay('Pick your sender board in the window that just opened…');
+    usb.device = await navigator.usb.requestDevice({ filters: [{ vendorId: 0x0d28 }] });
+    await usb.device.open();
+    if (!usb.device.configuration) await usb.device.selectConfiguration(1);
+
+    // Find the DAPLink interface. A board exposes several interfaces and more
+    // than one may be class 0xFF, so require one that actually carries a BULK
+    // endpoint in each direction -- picking the first 0xFF interface found an
+    // endpoint-less one and failed with "no bulk endpoints found".
+    let found = null;
+    const seen = [];
+    for (const iface of usb.device.configuration.interfaces){
+      for (const alt of iface.alternates){
+        const ins  = alt.endpoints.filter(e => e.direction === 'in'  && e.type === 'bulk');
+        const outs = alt.endpoints.filter(e => e.direction === 'out' && e.type === 'bulk');
+        seen.push('#' + iface.interfaceNumber + ' class ' + alt.interfaceClass +
+                  ' (' + alt.endpoints.length + ' ep, ' + ins.length + ' bulk-in, ' +
+                  outs.length + ' bulk-out)');
+        if (alt.interfaceClass === 0xFF && ins.length && outs.length){
+          found = { iface, alt, epIn: ins[0].endpointNumber, epOut: outs[0].endpointNumber };
+          break;
+        }
+      }
+      if (found) break;
+    }
+    if (!found){
+      usbLog('interfaces on this device:');
+      seen.forEach(s => usbLog('  ' + s));
+      throw new Error('no DAPLink interface with bulk endpoints — see "What was sent" for what ' +
+                      'this device offers');
+    }
+    usb.iface = found.iface.interfaceNumber;
+    usb.epIn = found.epIn;
+    usb.epOut = found.epOut;
+    usbLog('using interface #' + usb.iface + ', endpoints in=' + usb.epIn + ' out=' + usb.epOut);
+    await usb.device.claimInterface(usb.iface);
+
+    // Match the board's serial speed before talking to it, then drain whatever
+    // it printed before we arrived (its startup banner, mid-line) until it goes
+    // quiet, so nothing stale is sitting in the buffer.
+    await dapSetBaud(115200);
+    usbLog('serial baud set to 115200');
+    for (let i = 0; i < 25; i++){
+      const before = usb.rx.length;
+      await usbPoll();
+      await new Promise(r => setTimeout(r, 20));
+      if (usb.rx.length === before && i > 3) break;
+    }
+    usb.rx = '';
+    usb.waiters = [];
+
+    // Ask the board to prove it is listening. Retry a couple of times: the very
+    // first command can be swallowed while the board is still printing its
+    // startup banner.
+    let reply = null;
+    for (let attempt = 1; attempt <= 3; attempt++){
+      try { reply = await usbSend('PING', 2500); break; }
+      catch (e){
+        if (attempt === 3) throw new Error('the board never answered PING. Is sender.ts ' +
+                                           'flashed on this board, and not neuron.ts?');
+        usbLog('  (no answer, retrying ' + attempt + '/3)');
+      }
+    }
+    if (reply.indexOf('OK') !== 0) throw new Error('the board replied "' + reply + '"');
+
+    usbButtons(true);
+    usbSay('Connected. Press "Send the brain" to load it into the Calliopes.', 'ok');
+  } catch (err){
+    usbSay('Could not connect: ' + err.message, 'err');
+    usbButtons(false);
+    try { if (usb.device) await usb.device.close(); } catch (e){}
+    usb.device = null;
+  }
+}
+
+async function usbDisconnect(){
+  try {
+    if (usb.device){
+      await usb.device.releaseInterface(usb.iface);
+      await usb.device.close();
+    }
+  } catch (e){}
+  usb.device = null;
+  usb.rx = ''; usb.waiters = [];
+  usbButtons(false);
+  usbSay('Disconnected.');
+}
+
+/* Send a command, retrying once if the board does not answer. USB serial on
+   these boards drops the occasional line, and losing one command part-way
+   through a send would otherwise abandon the whole transfer. */
+async function usbSendRetry(line, timeoutMs){
+  try {
+    return await usbSend(line, timeoutMs);
+  } catch (e){
+    usbLog('  (no answer, resending once)');
+    return await usbSend(line, timeoutMs);
+  }
+}
+
+/* Turn the trained network into bridge commands and stream them across. */
+/* The radio protocol addresses a board by a TWO-CHARACTER name (neuron.ts does
+   name.substr(0,2)), so h10 would be read as h1. That caps the network at 10
+   hidden neurons in total and 10 answers. Check before sending rather than
+   quietly addressing the wrong board. */
+function usbCheckSize(net){
+  let hidden = 0;
+  for (let l = 1; l <= net.L-1; l++) hidden += net.sizes[l];
+  if (hidden > 10){
+    return 'This brain has ' + hidden + ' hidden neurons. The Calliopes can only be told ' +
+           'apart by a two-letter name (h0…h9), so at most 10 fit. Make the hidden layers smaller.';
+  }
+  if (net.sizes[net.L] > 10){
+    return 'This brain has ' + net.sizes[net.L] + ' answers; at most 10 (y0…y9) can be sent.';
+  }
+  if (net.sizes[0] > 10){
+    return 'This brain has ' + net.sizes[0] + ' inputs; at most 10 (x0…x9) can be sent.';
+  }
+  return null;
+}
+
+async function usbSendNetwork(){
+  if (!state.net){ usbSay('Train a brain first.', 'err'); return; }
+  const net = state.net;
+  const tooBig = usbCheckSize(net);
+  if (tooBig){ usbSay(tooBig, 'err'); return; }
+  $('usbLog').textContent = '';
+  usbButtons(false);
+  try {
+    usbSay('Sending the brain…');
+    await usbSendRetry('ARCH ' + net.sizes.join(','));
+
+    // How the inputs must be scaled. The network was trained on standardized
+    // values when "Scale the inputs" is on, and the x boards do the scaling
+    // themselves before they put a value on the wire -- so the maths stays
+    // visible on the boards instead of being hidden inside the weights.
+    // NORM off means "send the raw value".
+    if (state.norm){
+      for (let i = 0; i < net.sizes[0]; i++){
+        await usbSendRetry('NORM ' + i + ' ' + state.norm.mean[i].toFixed(6) + ' ' +
+                      state.norm.std[i].toFixed(6));
+      }
+    } else {
+      await usbSendRetry('NORM off');
+    }
+
+    // Who is who. Sent as TEXT so a 9-10 digit (possibly negative) serial
+    // survives; a float would round it and the board would never match.
+    const roles = boardRoles();
+    let missing = 0;
+    for (const r of roles){
+      const sn = (boardSerials[r.key] || '').trim();
+      if (!sn){ missing++; continue; }
+      await usbSendRetry('SERIAL ' + r.key + ' ' + sn);
+    }
+    if (missing){
+      usbLog('  (' + missing + ' board number(s) still empty — open "Which Calliope is which neuron")');
+    }
+
+    // One line per neuron, in the same order as the download: hidden layers
+    // first, then the answers.
+    //
+    const rows = exportRows(net);
+    for (let i = 0; i < rows.length; i++){
+      const bias = rows[i][0];
+      const w = rows[i].slice(1);
+      await usbSendRetry('NEURON ' + i + ' ' + bias.toFixed(6) + ' ' +
+                    w.map(v => v.toFixed(6)).join(','));
+    }
+
+    // The answer neurons announce themselves with a name and a colour.
+    const palette = [[0,40,0],[40,0,0],[0,0,40],[40,30,0],[30,0,40],
+                     [0,40,40],[40,0,40],[40,40,0],[20,40,0],[0,20,40]];
+    await usbSendRetry('THRESH 0.5');
+    for (let i = 0; i < net.sizes[net.L]; i++){
+      const c = palette[i % palette.length];
+      await usbSendRetry('COL ' + i + ' ' + c[0] + ' ' + c[1] + ' ' + c[2]);
+      // The sender chunks this at 14 characters for the radio hop, so any
+      // length is safe here; kept short so it scrolls quickly on a 5x5 screen.
+      await usbSendRetry('MSG ' + i + ' ' + usbAnswerName(i));
+    }
+
+    // What each input board may offer. The distinct values in that column of
+    // the table, so the boards can replay the examples the child typed in.
+    for (let i = 0; i < net.sizes[0]; i++){
+      const vals = usbColumnValues(i);
+      if (vals.length) await usbSendRetry('CHOICES ' + i + ' ' + vals.join(','));
+    }
+
+    await usbSendRetry('SEND', 20000);
+    if (state.norm){
+      usbLog('(the x boards will scale their values before sending them on)');
+    }
+    usbSay('Sent. The Calliopes now have this brain.', 'ok');
+  } catch (err){
+    usbSay('Sending failed: ' + err.message, 'err');
+  }
+  usbButtons(!!usb.device);
+}
+
+/* The message an answer neuron shows when it wins. */
+function usbAnswerName(i){ return answerLabel(i); }
+
+/* Up to 5 distinct values from column i of the data table, sorted, so an input
+   board has something sensible to step through. */
+function usbColumnValues(i){
+  const seen = [];
+  for (const r of state.rows){
+    const v = parseFloat(r[i]);
+    if (isFinite(v) && seen.indexOf(v) < 0) seen.push(v);
+  }
+  seen.sort((a,b) => a-b);
+  if (seen.length <= 5) return seen.map(v => +v.toFixed(4));
+  // Too many: take 5 evenly spaced ones.
+  const out = [];
+  for (let k = 0; k < 5; k++) out.push(+seen[Math.round(k*(seen.length-1)/4)].toFixed(4));
+  return out;
+}
+
+function closeSn(){ $('snModal').classList.remove('open'); }
+$('btnPasteSerials').addEventListener('click', () => {
+  $('snMsg').textContent = '';
+  // Pre-fill with what is already known, so the box doubles as a way to copy
+  // the numbers out again.
+  $('snText').value = boardRoles()
+    .map(r => r.key + ' = ' + (boardSerials[r.key] || ''))
+    .join('\n');
+  $('snModal').classList.add('open');
+  $('snText').focus();
+});
+$('snCancel').addEventListener('click', closeSn);
+$('snModal').addEventListener('click', e => { if (e.target === $('snModal')) closeSn(); });
+$('snLoad').addEventListener('click', () => {
+  const err = loadPastedSerials($('snText').value);
+  if (err){ $('snMsg').className = 'msg err'; $('snMsg').textContent = err; }
+  else closeSn();
+});
+$('btnClearSerials').addEventListener('click', () => {
+  boardSerials = {};
+  saveBoardSerials();
+  renderBoardTable();
+});
+
+$('btnUsbConnect').addEventListener('click', usbConnect);
+$('btnUsbDisconnect').addEventListener('click', usbDisconnect);
+$('btnUsbSend').addEventListener('click', usbSendNetwork);
+$('btnUsbCalc').addEventListener('click', async () => {
+  try { await usbSend('CALC'); usbSay('Round started on the Calliopes.', 'ok'); }
+  catch (err){ usbSay('Could not start a round: ' + err.message, 'err'); }
+});
+
+if (!navigator.usb){
+  usbSay('This browser cannot do WebUSB — use Chrome, Edge or Opera to send to the boards.');
+  $('btnUsbConnect').disabled = true;
+}
+
+/* boot */
+loadBoardSerials();
+loadAnswerLabels();
+renderPredictInputs();
+loadPreset('xor');
+</script>
+</body>
+</html>

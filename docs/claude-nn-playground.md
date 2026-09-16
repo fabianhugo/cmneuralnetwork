@@ -1049,3 +1049,364 @@ not necessity.
 
 The old comment said "so drawing never stalls the radio queue". The radio queue is the lesser
 hazard: radio buffers a few packets, softSerial buffers nothing.
+
+## 2026-09-16 — kids.html: child-friendly rebuild of the playground
+
+New standalone file [kids.html](../kids.html). `index.html` is untouched. Same network engine
+(activations, makeNet/forward/trainEpoch/evaluate, diagram, inspector, confusion, presets, paste,
+export all reused verbatim or lightly reworded); new layout and chrome.
+
+### Structure, as requested
+- **Network in the middle**, with a **+/- stepper above each layer column**. The steppers are
+  absolutely positioned and aligned to the canvas column x from `state.geom`, so they track the
+  diagram when layers are added or the window resizes (`positionLayerBar()`, called from
+  `drawNet()` and on resize).
+- **Hidden-layer count** has its own +/- control, and the **activation picker sits below the hidden
+  layers**, centred under them; both hide when there are no hidden layers.
+- **sigmoid is the default** (was relu in index.html).
+- **Data table below the network**, unchanged behaviour.
+- **"Try one example" beside the input layer**, in the left column of the network grid, with
+  probability bars instead of the old ASCII output.
+- **"How is it doing?" collapsed by default** (`<details>`).
+- **White margin left and right**: `.page{max-width:1180px;margin:0 auto;padding:0 40px}`.
+
+### Notes
+- Layer sizes now live in `state.nIn`/`state.nOut`/`state.hiddenSizes` rather than being read back
+  out of DOM inputs, because the steppers are re-rendered on every change and reading a
+  just-replaced node is fragile. `nIn()`/`nOut()` return the state values.
+- `drawChart()` returns early when the canvas has zero width — the results panel is collapsed at
+  load, and a hidden canvas would otherwise be sized 0 and stay blank. Redrawn on `toggle`.
+- Limits: 12 inputs, 10 answers, 4 hidden layers, 12 neurons per hidden layer.
+
+### Verified (2026-09-16)
+Ran the page script headlessly against a stub DOM and exercised it:
+- boots at 2-4-2 with **sigmoid** default, XOR preset, 64 usable rows;
+- every stepper direction works (`3-4-2`, `2-4-3`, `2-4-4-2`, `2-4-6-2`, `2-2` with no hidden layer)
+  and clamps at 12 / 2 / 4;
+- **XOR trains 53.3% -> 100.0%** (loss 0.758 -> 0.058) with the default sigmoid;
+- export: 6 rows / 22 cells vs 22 real parameters, parses as JSON;
+- all four presets load with the right shapes; paste accepts good input and rejects single-column.
+Not verified in a real browser (none available here), so the canvas layout and stepper alignment
+rest on the geometry maths and review.
+
+## 2026-09-16 — UART→radio bridge in sender.ts + WebUSB in kids.html
+
+The page can now push a freshly trained network into the Calliopes without anyone editing
+`sender.ts`.
+
+### sender.ts, section 6: the bridge
+`serial.onDataReceived(Delimiters.NewLine)` reads one command per line and answers `OK …` or
+`ERR …`, so the browser waits for a reply instead of guessing at timing.
+
+```
+PING | ARCH <sizes> | SERIAL <n|x> <i> <serial> | NEURON <i> <bias> <w,w,…>
+MSG <i> <text> | COL <i> <r> <g> <b> | THRESH <v> | CHOICES <i> <v,…>
+PIC <i> <k> <25 bits> | SEND | CALC
+```
+`SERIAL` lets the **page** own the serial-number→neuron mapping (user request), so the tables in
+`sender.ts` are only defaults now.
+
+### kids.html: step 4 panel
+Connect / Send the brain / Run one round / Disconnect, a collapsible board table (serials stored in
+`localStorage`, kept as TEXT — a 9-10 digit possibly-negative serial does not survive a float), and
+a log of everything sent. Talks CMSIS-DAP over WebUSB: claim the class-0xFF interface, DAP `0x88`
+reads serial, `0x89` writes it. Chrome/Edge/Opera only; the panel says so on other browsers.
+
+### The 19-character limit: audited, two real bugs found
+USB lines are unconstrained (longest is 56 chars); the limit applies only to what the bridge then
+re-emits over **radio**. Audited every radio message at the page's maximum network size:
+
+1. **Two-character names are baked into the protocol.** `neuron.ts` parses `name.substr(0,2)`, so
+   `h10` is read as `h1` + field `0w0` — messages would go to the **wrong board**, silently. Fixed
+   by `usbCheckSize()` in the page: at most 10 hidden neurons in total, 10 answers, 10 inputs,
+   refused with a plain-language message before anything is sent. (Hidden neurons are numbered
+   across all hidden layers, so two layers cannot both claim h0.)
+2. **Win-message chunking broke past 130 characters.** `"<name>m<n>:"` is 5 chars while the chunk
+   index is one digit but 6 at chunk 10, so a long message emitted a 20-character radio string.
+   Fixed: 14 chars per chunk below index 10, 13 from there on.
+
+### Verified (2026-09-16)
+- Bridge parser extracted from `sender.ts` and driven with 17 lines: every command parses, `MSG`
+  keeps its spaces, `\r` is stripped, malformed input returns `ERR` and changes nothing.
+  Two bugs caught here first: `splitFields` truncated `MSG` at its first space (field count now
+  depends on the command), and `ARCH` restarted hidden names per layer (`h0..h4,h0..h3` → collision).
+- Page side headless: role keys unique and all ≤2 chars for 2-4-2 and 2-3-2-2; size guard fires at
+  12 hidden neurons; 23 well-formed USB lines for XOR; longest 56 chars.
+- Radio audit: every message within its limit at maximum size; win-message chunks reassemble
+  exactly at 1/5/13/14/15/130/140/141/200/400 characters, longest chunk 19.
+- Not verified on hardware: no board here, so the DAP endpoint numbers and the WebUSB handshake
+  rest on the CMSIS-DAP spec and review.
+
+## 2026-09-16 — WebUSB fix, German title, answer names, and input scaling on the x boards
+
+### "no bulk endpoints found" — fixed
+The connect code took the FIRST class-0xFF interface and then read endpoints from it. A board
+exposes several interfaces and more than one can be 0xFF, so it could pick an endpoint-less one.
+Now it requires an interface that actually carries a **bulk endpoint in each direction**, filters
+`e.type === 'bulk'`, and on failure logs every interface it saw (number, class, endpoint counts) to
+the "What was sent" box — so a next failure is diagnosable instead of opaque.
+
+### Title
+"Build a Brain" → **"Calliope mini Neuronales Netz"**, subtitle removed (`<title>` and `<h1>`).
+
+### Answer names
+New collapsible "What do the answers mean?" in the network panel: one text field per answer,
+stored in `localStorage`, empty falls back to `Antwort <i>`. These become the win messages the y
+boards scroll, replacing the hardcoded `usbAnswerName()`.
+
+### Input scaling: the x boards do it (user's choice)
+**Do the neurons scale? No** — `neuron.ts` computes `sigmoid(sum(w*x)+b)` on whatever arrives, and
+nothing in the export recorded which convention the weights belonged to. That is the 60%-vs-100%
+trap from 2026-09-09.
+
+First implemented as folding the scaling into the first layer's weights
+(`w' = w/std`, `b' = b - sum(w*mean/std)`, verified exact to 4e-17). **The user preferred the sender
+to send normalized input instead**, so that was reverted in favour of:
+
+- page sends `NORM <i> <mean> <std>` per input column, or `NORM off`;
+- `sender.ts` stores it and relays `"<name>m"` / `"<name>s"` to each x board;
+- `neuron.ts` scales in the x-board transmit path: `sent = (chosen - myMean) / myStd`,
+  with `myStd == 0` meaning "send the raw value".
+
+Better than folding: the arithmetic stays visible on the board (it even logs
+`chose 0.25 -> scaled -1.34`), rather than being hidden inside weights that look arbitrary.
+
+### Verified (2026-09-16)
+Full chain simulated — page `fitNorm` → `NORM` lines → bridge parse → x-board scaling → network:
+**20/20 correct with scaling, 12/20 (60%) without**, reproducing the original bug exactly and
+confirming the fix. Wire values are sent at 6 decimals; rounding error 1.4e-6, negligible.
+`kids.html`: no missing DOM ids, no duplicate declarations, title/subtitle correct.
+`neuron.ts`: braces balanced, handler counts unchanged.
+Bridge now answers 12 commands: ARCH CALC CHOICES COL MSG NEURON NORM PIC PING SEND SERIAL THRESH.
+
+## 2026-09-16 — "no reply to PING": wrong DAP opcodes and no baud rate
+
+Checked the reference implementation the user pointed at,
+`/home/hugo/fw/Makecode/microbit-connection` (it wraps **dapjs**). Two faults in my transport,
+both fatal on their own:
+
+1. **Wrong vendor command codes.** I had guessed `0x88`/`0x89` for serial read/write. From
+   `dapjs/src/daplink/enums.ts` the real DAPLink serial commands are:
+   `0x81` READ_SETTINGS, `0x82` WRITE_SETTINGS, **`0x83` READ, `0x84` WRITE**.
+   `0x89` is in fact a *flash* command (DAPLinkFlash.RESET), so the board was being sent nonsense.
+2. **The serial baud rate was never set.** `usb-device-wrapper.ts` calls
+   `setSerialBaudrate(115200)` before reading. The board's serial port speed is independent of USB,
+   so without this both ends were at different speeds and nothing intelligible arrived.
+
+Framing itself was right and is confirmed by dapjs: write is `[0x84, count, ...bytes]` (max 62
+chars per 64-byte packet), read replies `[0x83, count, ...bytes]` and the reply's first byte is now
+checked. Baud is written as a little-endian uint32 payload to `0x82`. After connecting, the page
+drains six read packets and clears the buffer so the first line it matches is its own reply.
+
+**Lesson: look for a working implementation before guessing at a hardware protocol.** Both values
+were one grep away in a repo already on this machine.
+
+### Also in this pass
+- **"What do the answers mean?" moved** out of the network panel into section 4 (Send it to the
+  Calliopes), above the board table — it is send-time configuration, so it belongs with it.
+- **The "Try one example" box now matches the height of the network** beside it: `.netwrap` uses
+  `align-items:stretch`, `.trybox` is a flex column, and `.answer` takes `flex:1` so it absorbs the
+  leftover height instead of leaving the card short.
+
+### Verified (2026-09-16)
+Opcodes and baud present, answers panel inside section 4 and before the board table, no missing DOM
+ids, braces balanced. The transport itself is still unverified on hardware (no board here), but it
+now matches dapjs's behaviour rather than my guess.
+
+## 2026-09-16 — PING "answered" by the board's own startup banner
+
+`Could not connect: the board replied "eady -- A = send parameters, B = calculate "`.
+
+**Good news: the transport works.** That text is `sender.ts`'s own startup banner ("sender ready --
+…"), truncated because the drain consumed the first half of the line. So the DAP opcode and baud
+fixes were right; the remaining fault was in matching replies.
+
+**Cause:** `usbPoll` handed the *first* complete line to whoever was waiting, whatever it was. The
+board is not silent — it prints a banner at boot and a log line for every neuron it sends — so a
+command's "reply" was whatever happened to arrive next.
+
+**Fix:** `isReply()` — only `OK`/`OK …`/`ERR`/`ERR …` may satisfy a waiter. Everything else is the
+board talking to itself and is shown in the log prefixed `·` instead. Also:
+- the post-connect drain now reads until the board goes quiet (up to 25 polls) rather than a fixed
+  6, and clears any stale waiters;
+- `PING` retries 3× before giving up, since the first command can be swallowed while the banner is
+  still printing, and the failure message now names the likely cause (wrong hex on the board).
+
+This also fixes a bug that had not surfaced yet: `SEND` makes the board print nine
+`sent h0 (2 weights)`-style lines before `OK SEND`, and the old code would have resolved on the
+first of them and then desynchronised every later command.
+
+### Verified (2026-09-16)
+`isReply` over 13 lines, 13/13 correct: both forms of the banner rejected, all OK/ERR forms
+accepted, board chatter (`sent h0 …`, `out_y0:…`, `=== board table ===`) rejected, and the
+near-miss `"OKAY something"` rejected. A simulated `SEND` passes all nine log lines through to the
+display and resolves the waiter on `OK SEND` with no waiters left over.
+
+## 2026-09-16 — One serial table instead of two
+
+`boardSerials` (neurons) and `inputSerials` (x boards) merged into a single
+**`allNames` / `allSerials`** pair covering every board, with `serialOf(name)` and
+`setSerial(name, sn)` doing lookups **by name** rather than by position.
+
+### Why by name, not just one concatenated list
+Position-keyed tables have to stay in step with a second list (`boardNames`, `inputNames`), and
+`ARCH` rewrites `boardNames` at will — so a positional serial table silently points at the wrong
+board as soon as the architecture changes. Keyed by name, `serialOf("h0")` is stable across any
+`ARCH`, and a name that has no board yet returns `"0"` instead of reading off the end.
+
+### Knock-on simplifications
+- `SERIAL` is now `SERIAL <name> <sn>` (e.g. `SERIAL h0 -1394225184`) — the `n`/`x` role flag is
+  gone, and with it the chance of addressing the wrong table. `kids.html` sends `r.key` directly,
+  which is what the board table UI was already keyed by.
+- `sendNeuron` and `sendInput` both call `serialOf(name)`, so they no longer index a parallel array.
+- The A+B dump is one loop over `allNames`, annotating each row with whatever else is known about
+  that board (choices/pictures for an x, fanIn/bias for a neuron) and flagging `SERIAL NOT SET`.
+
+### Verified (2026-09-16)
+Extracted the merged functions and drove them: lookups correct for all seven boards, unknown name
+returns `"0"`, `SERIAL h1 …` updates in place, `SERIAL h7 …` appends (table grows to 8, arrays stay
+aligned), `SERIAL h0` alone is rejected. After `ARCH 2,4,2` rewrites `boardNames` to
+`h0,h1,h2,h3,y0,y1`, existing serials still resolve and the new `h3` correctly reports no serial.
+
+## 2026-09-16 — "How many thinking layers" vanished at zero
+
+`positionLayerBar()` hid the whole `#actBar` when there were no hidden layers, but that bar carries
+**both** the activation picker and the layer-count stepper. At zero hidden layers the control that
+adds one disappeared with it — a dead end, since nothing else can raise the count.
+
+**Fix:** the activation picker is now its own `#actPick` inside the bar, and only that hides. The
+bar and the layer count always stay. The picker still goes, since with no hidden layer there is
+nothing for an activation function to apply to (the output is always softmax).
+
+### Verified (2026-09-16)
+Headless: at `setHiddenCount(0)` the network is `2-2`, `#actBar` stays visible, `#actPick` is
+`none`, and the count control renders showing `0` with **+** enabled and **&minus;** disabled.
+Going back to 1 restores `2-4-2` and the picker; at the maximum of 4 the **+** is disabled.
+
+## 2026-09-16 — "no reply to NORM", and pasting a list of board numbers
+
+### The NORM failure
+The bridge parser handles `NORM 0 0.625000 0.279508` correctly (verified directly — `splitFields`
+gives exactly `["NORM","0","0.625000","0.279508"]` and it answers `OK NORM 0`), so the line never
+reached the board. Two fixes on the browser side:
+
+1. **`usbSend` resolved on the wrong reply.** The spin loop tested `if (!usb.waiters.length)` —
+   "is the queue empty" — so this promise resolved whenever **any** waiter was satisfied. A late
+   reply to an earlier command could stand in for the current one, leaving the real reply to be
+   matched against the *next* command and the sequence progressively desynchronised. Each send now
+   tracks its own waiter by identity.
+2. **A dropped line aborted the whole transfer.** USB serial on these boards loses the occasional
+   line; `usbSendRetry()` resends once before failing, and all 10 sends inside `usbSendNetwork` use
+   it. Losing one command mid-send no longer abandons the rest.
+
+### Pasting board numbers
+"Paste a list…" in the board table takes one number per line. Two shapes, mixable:
+```
+-1394225184            positional: Nth non-blank line -> Nth row of the table
+h0 = -1394225184       named: order does not matter ("h0: …" also works)
+```
+Positional entries fill top to bottom, named ones override. The box is **pre-filled with the
+current values** in `h0 = …` form, so it doubles as a way to copy the numbers out. "Clear all"
+empties the table.
+
+### Verified (2026-09-16)
+Positional paste maps all seven boards of a 2-3-2 net exactly; named paste works shuffled; mixed
+positional/named/blank/colon forms work; a partial list fills what it can. Rejected with a specific
+message: more numbers than boards, an unreadable line, an unknown board name, an empty box.
+Round trip — prefill the box and paste it straight back — leaves every value unchanged.
+
+## 2026-09-16 — Only h2 and x1 claimed identity; the other five stayed "?"
+
+### What the pattern said
+h2 (`850974008`) and x1 (`984150378`) are exactly the two **9-digit** serials; every 10-digit one
+failed. Sign is not the factor — y0 and y1 are positive and still failed. Checked and ruled out:
+identity messages are 12-14 characters (limit 19), and `splitFields` parses
+`SERIAL h0 -1394225184` correctly. So neither length nor parsing.
+
+### Most likely cause: the identity message was sent ONCE
+`sendNeuron`/`sendInput` each sent `serialOf(name) + "=" + name` a single time. **Radio is
+unacknowledged**, and this is the one message a board cannot do without — miss it and the board
+ignores everything that follows and sits on "?" for the whole round. Every other critical value
+(the x boards' choices) was already sent twice for exactly this reason; identity was not.
+
+Digit count is then a red herring: the two survivors are simply the two packets that happened to
+get through.
+
+**Fix:** `sendIdentity(name)` sends it **three times** at 120 ms. Repeats are harmless — a board
+re-adopting its own name is a no-op.
+
+At a 30% packet loss rate this moves the expected number of lost boards from 2.1 of 7 to 0.19,
+which matches the reported 5-of-7 failure well.
+
+### Also added: the board now reports every identity offer
+`neuron.ts` logs `id? want [-1394225184](11) mine [850974008](9) -> no` for each identity message it
+hears, with both strings and their lengths. If a mismatch survives the repeat fix, this shows
+whether it is a wrong serial, a lost character, or a stray space — instead of a silent "?".
+
+### Verified (2026-09-16)
+Simulated all seven boards through a full `sendAll`: every board claims the right name; with two of
+every three identity packets dropped they still all claim correctly; a repeat never dislodges a
+board that already has its name.
+
+## 2026-09-16 — Per-neuron calculate (A+B), bar-graph output, last result on B
+
+### Bar graph instead of the scrolling number
+`basic.showNumber(output, 80)` replaced with **`led.plotBarGraph(output, 1)`**.
+
+The `1` matters. `plotBarGraph(value, high)` **auto-scales when `high` is 0** — it tracks the
+largest value seen (pxt-calliope/libs/core/led.ts: `if (high > 0) barGraphHigh = high; else if
+(value > barGraphHigh …)`). With 0 the same 0.93 would draw differently depending on what came
+before, so the bar would mean nothing between rounds. A sigmoid output is always 0..1, so the scale
+is pinned there: 0 → empty, 0.5 → 3 rows, 0.93 → full.
+
+It is also instant, where `showNumber` scrolls and blocks for about a second — which on these
+boards costs arriving softSerial lines.
+
+### A+B: calculate on this board alone
+New handler on every neuron board. Computes from whatever inputs have arrived (missing ones count
+as 0, and it says so on serial: `h0: only 1 of 2 inputs so far`), sends the result on P3 and draws
+the bar — without waiting for the sender's "calc". An x board just arms itself and sends its
+current choice. Refuses with the No icon when the board is not configured yet.
+
+### B shows the last output again
+`lastOutput` / `hasOutput` remember the most recent result. After a round the screen is cleared, so
+B now re-draws it as a bar at the end of its state dump. `hasOutput` stays false until the first
+calculation, so an empty bar is never mistaken for a real 0 — it says
+`h0: has not calculated anything yet` instead.
+
+Added `showState()` (name, "?" or the x board's picture) and `countInputs()`; the main loop's
+repaint now calls `showState()` rather than repeating the same three-way branch.
+
+### Verified (2026-09-16)
+Braces balanced; exactly one `basic.forever`, one `onReceivedValue`, one `onReceivedString`, three
+`softSerial.onLine`, and now **three** `input.onButtonEvent` (A, B, A+B). No `showNumber` remains.
+Bar rows reproduced from the MakeCode source for 0, 0.11, 0.25, 0.5, 0.75, 0.93, 1 at `high=1`.
+
+## 2026-09-16 — A+B triggers the whole network; identity still failing for 10-digit serials
+
+### A+B now broadcasts
+Changed from "calculate this one neuron" to **`radio.sendValue("calc", 0)` plus arming this board**
+— the same thing the sender's B does, so a round can be run with the sender unplugged. The board
+arms itself explicitly because a board does not hear its own radio broadcast.
+`countInputs()` became unused and was removed.
+
+### Identity: still only h2 and x1, and what that now rules out
+The repeat fix works — x1 reports receiving **three** identity messages, i.e. its own three
+repeats. So radio delivery is fine, and the message length (12-14 chars vs the 19 limit) was never
+the problem. The `SERIAL` value is stored as a **string** end to end (`setSerial` keeps `f[2]`
+verbatim; no parseInt/parseFloat touches it), so the USB hop is not rounding it either.
+
+That leaves the value itself: either the serial in the table is not what that board reports, or
+`control.deviceSerialNumber()` returns something other than what button B printed. The digit-count
+pattern may well be coincidence — two of seven getting through is also what random loss looked
+like before.
+
+**Both ends now log, so the next run is decisive rather than another guess:**
+- sender: `id-> [-1394225184=h0]` for every identity it transmits (and flags an unset serial);
+- board: `id? want [-1394225184](11) mine [850974008](9) -> no` for every identity it hears.
+
+If no board ever prints a line whose `want[]` equals its own `mine[]`, the table is simply wrong for
+that board and the serials need re-reading with button B.
+
+### Verified (2026-09-16)
+`neuron.ts` braces balanced, three button handlers, one forever loop, no dead functions.
